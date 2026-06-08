@@ -45,6 +45,12 @@ A `<thread-id>` az az azonosító, amit később `/attach <thread-id>` paranccsa
 
 Ezt akkor használd, ha telefonon kezdtél dolgozni, de a gépen, Codex CLI-ben vagy VS Code terminálból akarod folytatni.
 
+Gombos menüből ugyanez elérhető:
+
+```text
+/handoff
+```
+
 Lépések:
 
 1. Telegramon küldj legalább egy valódi üzenetet Codexnek.
@@ -94,7 +100,7 @@ Lépések:
    <CODEX_WORKS>\AttysCodexBridge\scripts\send-vsc-handoff.ps1 -ThreadId <thread-id> -Workspace <CODEX_WORKS>\AttysCodexBridge -Model gpt-5.5
    ```
 
-4. A script Telegram üzenetet küld, és `.telecodex/handoff-inbox.json` rekordot ír.
+4. A script Telegram üzenetet küld, és az AttysCodexBridge saját `.telecodex/handoff-inbox.json` rekordját írja.
 5. Ha válaszolsz erre Telegramon, a bot előbb átvált a megadott `thread ID` + `Workspace` párra, és csak utána küldi be az üzenetedet Codexnek.
 
 Ha a VSC oldali thread modellje eltér a bot alapértelmezett modelljétől, add át explicit módon `-Model <modell>` paraméterrel. Például ha a VS Code panelen `5.5` látszik, használd: `-Model gpt-5.5`.
@@ -115,6 +121,18 @@ Szintetikus ellenőrzés Telegram küldés és fájlírás nélkül:
 ```
 
 Fontos: ez a script nem a Telegram chat korábbi állapotából találgat. Mindig a megadott `thread ID` és az aktuális vagy megadott `Workspace` kerül átadásra.
+
+## Bot-saját állapot és célrepo dokumentáció
+
+Az AttysCodexBridge saját runtime adatai az AttysCodexBridge repó alatt maradjanak:
+
+```powershell
+<CODEX_WORKS>\AttysCodexBridge\.telecodex
+```
+
+Ide tartozik a health, context registry, watchdog állapot, handoff inbox/outbox, feltöltött fájlok stagingje, visszaküldendő artifactok, operator-events és operator-notes. Ezek nem célrepo dokumentációs adatok.
+
+Ha a boton keresztül Codex egy konkrét repón dolgozik, akkor annak a repónak a saját `AGENTS.md` szabályai érvényesek. Ha ott `STATE.md` vagy `docs/CHANGELOG.dev.md` frissítés kell, abba csak az adott repóra vonatkozó munka kerüljön. Bot-életciklus, Telegram session, PID, watchdog, restart/stop és egyéb AttysCodexBridge működési adat ne kerüljön célrepó `STATE.md` vagy changelog fájljaiba.
 
 ## Gépről Telegramra: kézi `/attach <thread-id>`
 
@@ -215,7 +233,13 @@ A botban ezek működnek:
 /help sessions
 /help new
 /help projekts
+/help doctor
+/help git
+/help repo
+/help handoff
 /help watchdog
+/help notes
+/help commit
 /help launch_profiles
 /help model
 /help effort

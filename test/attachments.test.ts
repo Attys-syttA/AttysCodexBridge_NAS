@@ -52,7 +52,7 @@ describe("stageFile", () => {
   it("stages a file and returns metadata", async () => {
     const buffer = Buffer.from("hello world");
     const result = await stageFile(buffer, "test.txt", "text/plain", {
-      workspace: testDir,
+      stateDir: testDir,
       turnId: "turn-1",
       maxFileSize: 1024 * 1024,
     });
@@ -72,7 +72,7 @@ describe("stageFile", () => {
 
     await expect(
       stageFile(buffer, "big.bin", "application/octet-stream", {
-        workspace: testDir,
+        stateDir: testDir,
         turnId: "turn-2",
         maxFileSize: 512,
       }),
@@ -82,7 +82,7 @@ describe("stageFile", () => {
   it("sanitizes the filename", async () => {
     const buffer = Buffer.from("data");
     const result = await stageFile(buffer, "../../evil.txt", "text/plain", {
-      workspace: testDir,
+      stateDir: testDir,
       turnId: "turn-3",
       maxFileSize: 1024 * 1024,
     });
@@ -99,25 +99,25 @@ describe("buildFileInstructions", () => {
       {
         originalName: "log.txt",
         safeName: "log.txt",
-        localPath: "/workspace/.telecodex/inbox/t1/log.txt",
+        localPath: "/bot/.telecodex/inbox/t1/log.txt",
         mimeType: "text/plain",
         sizeBytes: 1234,
       },
     ];
 
-    const result = buildFileInstructions(files, "/workspace/.telecodex/turns/t1/out");
+    const result = buildFileInstructions(files, "/bot/.telecodex/turns/t1/out");
 
     expect(result).toContain("log.txt");
     expect(result).toContain("text/plain");
-    expect(result).toContain("/workspace/.telecodex/turns/t1/out");
+    expect(result).toContain("/bot/.telecodex/turns/t1/out");
     expect(result).toContain("staged on disk");
   });
 });
 
 describe("inboxPath / outboxPath", () => {
   it("returns deterministic paths", () => {
-    expect(inboxPath("/workspace", "turn-1")).toBe(path.join("/workspace", ".telecodex", "inbox", "turn-1"));
-    expect(outboxPath("/workspace", "turn-1")).toBe(path.join("/workspace", ".telecodex", "turns", "turn-1", "out"));
+    expect(inboxPath("/bot/.telecodex", "turn-1")).toBe(path.join("/bot/.telecodex", "inbox", "turn-1"));
+    expect(outboxPath("/bot/.telecodex", "turn-1")).toBe(path.join("/bot/.telecodex", "turns", "turn-1", "out"));
   });
 });
 

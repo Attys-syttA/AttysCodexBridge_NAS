@@ -26,11 +26,28 @@ export function normalizeWorkspaceList(config: TeleCodexConfig, workspaces: stri
   const normalized = workspaces
     .filter(Boolean)
     .map((workspace) => normalizeWorkspacePath(config, workspace))
-    .filter((workspace) => workspace.startsWith("/") || existsSync(workspace));
+    .filter((workspace) => isSelectableWorkspace(config, workspace));
 
   return [...new Set(normalized)].sort((left, right) =>
     left.localeCompare(right, undefined, { sensitivity: "base" }),
   );
+}
+
+export function isSelectableWorkspace(config: TeleCodexConfig, workspace: string): boolean {
+  if (isUnixAbsolutePath(workspace)) {
+    return isInsideWorkspaceRoot(config.workspaceRoot, workspace) || existsSync(workspace);
+  }
+
+  const normalized = stripExtendedLengthPrefix(path.normalize(workspace));
+  if (!existsSync(normalized)) {
+    return false;
+  }
+
+  if (isInsideWorkspaceRoot(config.workspaceRoot, normalized)) {
+    return true;
+  }
+
+  return isWorkspaceCandidate(normalized);
 }
 
 export function formatWorkspaceButtonLabel(
@@ -63,4 +80,34 @@ function remapIntoWorkspaceRoot(workspaceRoot: string | undefined, workspace: st
 
 function isWindowsDrivePath(workspace: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(workspace);
+}
+
+function isUnixAbsolutePath(workspace: string): boolean {
+  return workspace.startsWith("/") && !isWindowsDrivePath(workspace);
+}
+
+function isInsideWorkspaceRoot(workspaceRoot: string | undefined, workspace: string): boolean {
+  if (!workspaceRoot) {
+    return false;
+  }
+
+  const root = stripExtendedLengthPrefix(path.resolve(workspaceRoot));
+  const target = stripExtendedLengthPrefix(path.resolve(workspace));
+  const relative = path.relative(root, target);
+  return Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+function isWorkspaceCandidate(candidate: string): boolean {
+  return (
+    existsSync(path.join(candidate, ".git")) ||
+    existsSync(path.join(candidate, "package.json")) ||
+    existsSync(path.join(candidate, "pyproject.toml")) ||
+    existsSync(path.join(candidate, "Cargo.toml")) ||
+    existsSync(path.join(candidate, "go.mod")) ||
+    existsSync(path.join(candidate, "requirements.txt"))
+  );
+}
+
+function stripExtendedLengthPrefix(value: string): string {
+  return value.startsWith("\\\\?\\") ? value.slice(4) : value;
 }

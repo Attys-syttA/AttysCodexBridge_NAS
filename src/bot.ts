@@ -36,18 +36,23 @@ import {
   formatLaunchProfileLabel,
 } from "./codex-launch.js";
 import { getThread } from "./codex-state.js";
+import { createCommit, runCommitChecks, suggestCommitMessage } from "./commit-flow.js";
 import type { TeleCodexConfig, ToolVerbosity } from "./config.js";
 import { contextKeyFromCtx, isTopicContextKey, parseContextKey, type TelegramContextKey } from "./context-key.js";
 import { friendlyErrorText } from "./error-messages.js";
 import { escapeHTML, formatTelegramHTML } from "./format.js";
 import { createRuntimeHealthMonitor, type RuntimeHealthMonitor } from "./health.js";
 import { findHandoffInboxRecord, removeHandoffInboxRecord } from "./handoff-inbox.js";
+import { appendOperatorEvent, appendOperatorNote } from "./operator-log.js";
+import { buildOperatorPolicyPreamble } from "./operator-policy.js";
 import {
   requestGracefulBotShutdown,
   scheduleBotRestart,
   writeBotControlRequest,
   type BotControlAction,
 } from "./process-control.js";
+import { formatGitStatusPlain, inspectRepo, type RepoDiagnostics } from "./repo-diagnostics.js";
+import { getRuntimeRoot } from "./runtime-paths.js";
 import { SessionRegistry, type ContextHandoff } from "./session-registry.js";
 import { getAvailableBackends, transcribeAudio } from "./voice.js";
 import { formatWorkspaceButtonLabel } from "./workspace.js";
@@ -62,6 +67,7 @@ const KEYBOARD_PAGE_SIZE = 6;
 const NOOP_PAGE_CALLBACK_DATA = "noop_page";
 const LAUNCH_PROFILES_COMMAND = "/launch_profiles";
 const BOT_CONTROL_CONFIRM_TTL_MS = 2 * 60 * 1000;
+const COMMIT_CONFIRM_TTL_MS = 5 * 60 * 1000;
 
 type TelegramChatId = number | string;
 type TelegramParseMode = "HTML";
@@ -70,6 +76,13 @@ type PendingBotControlConfirmation = {
   action: BotControlAction;
   contextKey: TelegramContextKey;
   requestedBy?: string;
+  expiresAt: number;
+};
+type PendingCommitConfirmation = {
+  contextKey: TelegramContextKey;
+  repoRoot: string;
+  message: string;
+  files: string[];
   expiresAt: number;
 };
 export type DirectResumeWarning = {
@@ -155,6 +168,7 @@ export function createBot(
   const pendingModelButtons = new Map<TelegramContextKey, KeyboardItem[]>();
   const pendingEffortButtons = new Map<TelegramContextKey, KeyboardItem[]>();
   const pendingBotControlConfirmations = new Map<string, PendingBotControlConfirmation>();
+  const pendingCommitConfirmations = new Map<string, PendingCommitConfirmation>();
   const lastPromptInput = new Map<TelegramContextKey, CodexPromptInput>();
 
   registry.onRemove((key) => {
@@ -165,6 +179,11 @@ export function createBot(
     for (const [nonce, pending] of pendingBotControlConfirmations) {
       if (pending.contextKey === key) {
         pendingBotControlConfirmations.delete(nonce);
+      }
+    }
+    for (const [nonce, pending] of pendingCommitConfirmations) {
+      if (pending.contextKey === key) {
+        pendingCommitConfirmations.delete(nonce);
       }
     }
     lastPromptInput.delete(key);
@@ -198,6 +217,10 @@ export function createBot(
 
     const name = [ctx.from.first_name, ctx.from.last_name].filter(Boolean).join(" ").trim();
     return name ? `${name} (${ctx.from.id})` : String(ctx.from.id);
+  };
+
+  const inspectContextRepo = async (session: CodexSessionService): Promise<RepoDiagnostics> => {
+    return inspectRepo(session.getInfo().workspace, config.workspaceRoot);
   };
 
   const getContextSession = async (
@@ -888,7 +911,12 @@ export function createBot(
         return;
       }
 
-      await session.prompt(userInput, callbacks);
+      const repo = await inspectContextRepo(session);
+      const policyPreamble = buildOperatorPolicyPreamble(config, repo);
+      const promptInput: CodexPromptInput = typeof userInput === "string"
+        ? { policyPreamble, text: userInput }
+        : { ...userInput, policyPreamble };
+      await session.prompt(promptInput, callbacks);
       updateSessionMetadata(contextKey, session);
       await finalizeResponse();
     } catch (error) {
@@ -1381,6 +1409,243 @@ export function createBot(
     ];
 
     await safeReply(ctx, escapeHTML(lines.join("\n")), { fallbackText: lines.join("\n") });
+  });
+
+  const sendRepoDiagnostics = async (
+    ctx: Context,
+    command: "git" | "repo",
+    session: CodexSessionService,
+  ): Promise<void> => {
+    const info = session.getInfo();
+    const repo = await inspectContextRepo(session);
+    const lines = command === "git"
+      ? ["Git állapot:", formatGitStatusPlain(repo.git)]
+      : [
+          "Repo diagnosztika:",
+          `Workspace: ${repo.workspace}`,
+          `Git repo: ${repo.git.repoRoot ?? "(nincs)"}`,
+          `Főkönyvtárnak tűnik: ${repo.workspaceLooksLikeParent ? "igen" : "nem"}`,
+          "",
+          "AGENTS.md lánc:",
+          ...(repo.agentsFiles.length > 0 ? repo.agentsFiles : ["(nincs találat)"]),
+          "",
+          repo.workspaceLooksLikeParent
+            ? "Figyelem: ez főkönyvtárnak tűnik. Konkrét munkához használd a /projekts parancsot."
+            : "Konkrét repo munkamappának tűnik.",
+        ];
+
+    await appendOperatorEvent(config, {
+      command: `/${command}`,
+      decision: "read-only",
+      workspace: info.workspace,
+      threadId: info.threadId,
+      detail: {
+        repoRoot: repo.git.repoRoot,
+        dirty: repo.git.dirty,
+        ahead: repo.git.ahead,
+        behind: repo.git.behind,
+      },
+    }).catch(() => {});
+    await safeReply(ctx, escapeHTML(lines.join("\n")), { fallbackText: lines.join("\n") });
+  };
+
+  bot.command("git", async (ctx) => {
+    const contextSession = await getContextSession(ctx, { deferThreadStart: true });
+    if (!contextSession) {
+      return;
+    }
+    await sendRepoDiagnostics(ctx, "git", contextSession.session);
+  });
+
+  bot.command("repo", async (ctx) => {
+    const contextSession = await getContextSession(ctx, { deferThreadStart: true });
+    if (!contextSession) {
+      return;
+    }
+    await sendRepoDiagnostics(ctx, "repo", contextSession.session);
+  });
+
+  bot.command("doctor", async (ctx) => {
+    const contextSession = await getContextSession(ctx, { deferThreadStart: true });
+    if (!contextSession) {
+      return;
+    }
+
+    const { session } = contextSession;
+    const info = session.getInfo();
+    const repo = await inspectContextRepo(session);
+    const authStatus = await checkAuthStatus(config.codexApiKey);
+    const snapshot = health.getSnapshot();
+    const lines = [
+      "Doctor állapot:",
+      `Bot: ${snapshot.status}, PID ${snapshot.process.pid}`,
+      `Host: ${snapshot.host.label} (${snapshot.host.name}\\${snapshot.host.user})`,
+      `Codex auth: ${authStatus.authenticated ? "OK" : "nincs"} (${authStatus.method})`,
+      `Workspace: ${info.workspace}`,
+      `Thread ID: ${info.threadId ?? "(még nincs)"}`,
+      `Launch profile: ${info.launchProfileLabel} (${info.launchProfileBehavior})`,
+      `Runtime root: ${getRuntimeRoot(config)}`,
+      "",
+      formatGitStatusPlain(repo.git),
+      "",
+      snapshot.activeRequest
+        ? `Aktív kérés: ${snapshot.activeRequest.status}, ${snapshot.activeRequest.startedAt}`
+        : "Aktív kérés: nincs",
+      repo.workspaceLooksLikeParent
+        ? "Figyelem: a workspace főkönyvtárnak tűnik. Konkrét repóhoz használd a /projekts parancsot."
+        : undefined,
+    ].filter((line): line is string => Boolean(line));
+
+    await appendOperatorEvent(config, {
+      command: "/doctor",
+      decision: "read-only",
+      workspace: info.workspace,
+      threadId: info.threadId,
+      detail: { repoRoot: repo.git.repoRoot, auth: authStatus.method },
+    }).catch(() => {});
+    await safeReply(ctx, escapeHTML(lines.join("\n")), { fallbackText: lines.join("\n") });
+  });
+
+  bot.command("notes", async (ctx) => {
+    const contextSession = await getContextSession(ctx, { deferThreadStart: true });
+    if (!contextSession) {
+      return;
+    }
+
+    const { session } = contextSession;
+    const info = session.getInfo();
+    const repo = await inspectContextRepo(session);
+    const notePath = await appendOperatorNote(config, "/notes", info, {
+      repoRoot: repo.git.repoRoot,
+      branch: repo.git.branch,
+      dirty: repo.git.dirty,
+      ahead: repo.git.ahead,
+      behind: repo.git.behind,
+      lastCommit: repo.git.lastCommit,
+      followUp: repo.git.ahead > 0 ? "local commits need push from a network-enabled session" : "none recorded",
+    });
+    await appendOperatorEvent(config, {
+      command: "/notes",
+      decision: "noted",
+      workspace: info.workspace,
+      threadId: info.threadId,
+      detail: { notePath },
+    }).catch(() => {});
+    const lines = [
+      "Operator jegyzet elmentve a bot saját runtime mappájába.",
+      `Fájl: ${notePath}`,
+      `Workspace: ${info.workspace}`,
+      `Repo: ${repo.git.repoRoot ?? "(nincs)"}`,
+      `Utolsó commit: ${repo.git.lastCommit ?? "(nincs)"}`,
+    ];
+    await safeReply(ctx, escapeHTML(lines.join("\n")), { fallbackText: lines.join("\n") });
+  });
+
+  bot.command("handoff", async (ctx) => {
+    const keyboard = new InlineKeyboard()
+      .text("CLI/VS Code átadás", "handoff_handback")
+      .row()
+      .text("Thread ID", "handoff_thread")
+      .row()
+      .text("Másik host", "handoff_host_help")
+      .row()
+      .text("Attach segítség", "handoff_attach_help");
+    await safeReply(ctx, "<b>Handoff menü:</b>", {
+      fallbackText: "Handoff menü:",
+      replyMarkup: keyboard,
+    });
+  });
+
+  bot.command("commit", async (ctx) => {
+    const contextSession = await getContextSession(ctx, { deferThreadStart: true });
+    if (!contextSession) {
+      return;
+    }
+
+    const { contextKey, session } = contextSession;
+    if (isBusy(contextKey)) {
+      await safeReply(ctx, escapeHTML("Futó Codex kérés közben nem indítok commit-flow-t."), {
+        fallbackText: "Futó Codex kérés közben nem indítok commit-flow-t.",
+      });
+      return;
+    }
+
+    const info = session.getInfo();
+    const repo = await inspectContextRepo(session);
+    if (!repo.git.isRepo || !repo.git.repoRoot) {
+      await appendOperatorEvent(config, {
+        command: "/commit",
+        decision: "blocked",
+        workspace: info.workspace,
+        threadId: info.threadId,
+        detail: { reason: "no_git_repo" },
+      }).catch(() => {});
+      await safeReply(ctx, escapeHTML("Nem git repo az aktív workspace. Válassz konkrét projektet a /projekts paranccsal."), {
+        fallbackText: "Nem git repo az aktív workspace. Válassz konkrét projektet a /projekts paranccsal.",
+      });
+      return;
+    }
+
+    if (!repo.git.dirty) {
+      await appendOperatorEvent(config, {
+        command: "/commit",
+        decision: "blocked",
+        workspace: info.workspace,
+        threadId: info.threadId,
+        detail: { reason: "clean_repo", repoRoot: repo.git.repoRoot },
+      }).catch(() => {});
+      await safeReply(ctx, escapeHTML("Nincs commitolható változás."), { fallbackText: "Nincs commitolható változás." });
+      return;
+    }
+
+    const unsafeFiles = repo.git.changedFiles.filter(isUnsafeCommitPath);
+    if (unsafeFiles.length > 0) {
+      const lines = [
+        "Commit blokkolva: secret/config jellegű fájl szerepel a változáslistában.",
+        "",
+        ...unsafeFiles.map((file) => `- ${file}`),
+      ];
+      await appendOperatorEvent(config, {
+        command: "/commit",
+        decision: "blocked",
+        workspace: info.workspace,
+        threadId: info.threadId,
+        detail: { reason: "unsafe_files", files: unsafeFiles },
+      }).catch(() => {});
+      await safeReply(ctx, escapeHTML(lines.join("\n")), { fallbackText: lines.join("\n") });
+      return;
+    }
+
+    const message = suggestCommitMessage(repo.git);
+    const nonce = randomUUID();
+    pendingCommitConfirmations.set(nonce, {
+      contextKey,
+      repoRoot: repo.git.repoRoot,
+      message,
+      files: repo.git.changedFiles,
+      expiresAt: Date.now() + COMMIT_CONFIRM_TTL_MS,
+    });
+    const keyboard = new InlineKeyboard()
+      .text("Commit megerősítése", `commit_yes:${nonce}`)
+      .row()
+      .text("Mégse", `commit_no:${nonce}`);
+    const lines = [
+      "Commit előnézet:",
+      `Repo: ${repo.git.repoRoot}`,
+      `Branch: ${repo.git.branch ?? "(ismeretlen)"}`,
+      `Fájlok: ${repo.git.changedFiles.length}`,
+      `Javasolt üzenet: ${message}`,
+      "",
+      "Push nem fog történni.",
+      "Megerősítés után build/test/diff-check/ggshield fut, majd commit készül, ha minden rendben.",
+      "",
+      ...repo.git.changedFiles.slice(0, 20).map((file) => `- ${file}`),
+      repo.git.changedFiles.length > 20 ? `... és még ${repo.git.changedFiles.length - 20} fájl` : undefined,
+    ].filter((line): line is string => Boolean(line));
+    await safeReply(ctx, escapeHTML(lines.join("\n")), {
+      fallbackText: lines.join("\n"),
+      replyMarkup: keyboard,
+    });
   });
 
   const requestBotControlConfirmation = async (ctx: Context, action: BotControlAction): Promise<void> => {
@@ -1968,6 +2233,183 @@ export function createBot(
         fallbackText: message,
       });
     }
+  });
+
+  bot.callbackQuery(/^commit_(yes|no):(.+)$/, async (ctx) => {
+    const chatId = ctx.chat?.id;
+    const messageId = ctx.callbackQuery.message?.message_id;
+    const decision = ctx.match?.[1];
+    const nonce = ctx.match?.[2];
+    const contextKey = contextKeyFromCtx(ctx);
+
+    if (!chatId || !messageId || !decision || !nonce || !contextKey) {
+      await ctx.answerCallbackQuery();
+      return;
+    }
+
+    const pending = pendingCommitConfirmations.get(nonce);
+    if (!pending || pending.contextKey !== contextKey || pending.expiresAt < Date.now()) {
+      pendingCommitConfirmations.delete(nonce);
+      await ctx.answerCallbackQuery({ text: "A commit megerősítés lejárt" });
+      await safeEditMessage(bot, chatId, messageId, escapeHTML("A commit megerősítés lejárt. Futtasd újra: /commit"), {
+        fallbackText: "A commit megerősítés lejárt. Futtasd újra: /commit",
+      });
+      return;
+    }
+
+    pendingCommitConfirmations.delete(nonce);
+    if (decision === "no") {
+      await ctx.answerCallbackQuery({ text: "Mégse" });
+      await appendOperatorEvent(config, {
+        command: "/commit",
+        decision: "blocked",
+        workspace: pending.repoRoot,
+        detail: { reason: "cancelled" },
+      }).catch(() => {});
+      await safeEditMessage(bot, chatId, messageId, escapeHTML("Mégse. Commit nem készült."), {
+        fallbackText: "Mégse. Commit nem készült.",
+      });
+      return;
+    }
+
+    await ctx.answerCallbackQuery({ text: "Ellenőrzések indulnak..." });
+    await safeEditMessage(
+      bot,
+      chatId,
+      messageId,
+      escapeHTML("Ellenőrzések futnak. Push nem fog történni."),
+      { fallbackText: "Ellenőrzések futnak. Push nem fog történni." },
+    );
+
+    try {
+      const checks = await runCommitChecks(pending.repoRoot);
+      if (!checks.ok) {
+        const lines = [
+          "Commit blokkolva, mert legalább egy ellenőrzés hibázott:",
+          "",
+          ...checks.checks.map((check) => `- ${check.name}: ${check.status} (${trimLine(check.detail, 160)})`),
+        ];
+        await appendOperatorEvent(config, {
+          command: "/commit",
+          decision: "blocked",
+          workspace: pending.repoRoot,
+          detail: { reason: "checks_failed", checks: checks.checks.map((check) => ({ name: check.name, status: check.status })) },
+        }).catch(() => {});
+        await safeEditMessage(bot, chatId, messageId, escapeHTML(lines.join("\n")), { fallbackText: lines.join("\n") });
+        return;
+      }
+
+      const commit = await createCommit(pending.repoRoot, pending.message, pending.files);
+      const lines = [
+        "Commit elkészült. Push nem történt.",
+        "",
+        commit,
+        "",
+        "Ellenőrzések:",
+        ...checks.checks.map((check) => `- ${check.name}: ${check.status}`),
+      ];
+      await appendOperatorEvent(config, {
+        command: "/commit",
+        decision: "commit-created",
+        workspace: pending.repoRoot,
+        detail: { commit, files: pending.files.length },
+      }).catch(() => {});
+      await safeEditMessage(bot, chatId, messageId, escapeHTML(lines.join("\n")), { fallbackText: lines.join("\n") });
+    } catch (error) {
+      const message = `Commit-flow hiba: ${friendlyErrorText(error)}`;
+      await appendOperatorEvent(config, {
+        command: "/commit",
+        decision: "failed",
+        workspace: pending.repoRoot,
+        detail: { error: friendlyErrorText(error) },
+      }).catch(() => {});
+      await safeEditMessage(bot, chatId, messageId, `<b>Nem sikerült:</b> ${escapeHTML(message)}`, {
+        fallbackText: message,
+      });
+    }
+  });
+
+  bot.callbackQuery(/^handoff_(handback|thread|host_help|attach_help)$/, async (ctx) => {
+    const action = ctx.match?.[1];
+    const contextSession = await getContextSession(ctx, { deferThreadStart: true });
+    if (!contextSession || !action) {
+      await ctx.answerCallbackQuery();
+      return;
+    }
+
+    const { contextKey, session } = contextSession;
+    const info = session.getInfo();
+    if (action === "thread") {
+      await ctx.answerCallbackQuery({ text: "Thread ID" });
+      const lines = [
+        "Aktuális thread:",
+        `Thread ID: ${info.threadId ?? "(még nincs)"}`,
+        `Workspace: ${info.workspace}`,
+      ];
+      await safeReply(ctx, escapeHTML(lines.join("\n")), { fallbackText: lines.join("\n") });
+      return;
+    }
+
+    if (action === "host_help") {
+      await ctx.answerCallbackQuery({ text: "Másik host" });
+      await safeReply(ctx, escapeHTML("Másik hostra átadás: /handoff_to <host>"), {
+        fallbackText: "Másik hostra átadás: /handoff_to <host>",
+      });
+      return;
+    }
+
+    if (action === "attach_help") {
+      await ctx.answerCallbackQuery({ text: "Attach" });
+      await safeReply(ctx, escapeHTML("Attach használat: /attach <thread-id>"), {
+        fallbackText: "Attach használat: /attach <thread-id>",
+      });
+      return;
+    }
+
+    if (isBusy(contextKey)) {
+      await ctx.answerCallbackQuery({ text: "Várd meg a futó kérést" });
+      return;
+    }
+
+    if (!session.hasActiveThread() || !info.threadId) {
+      await ctx.answerCallbackQuery({ text: "Nincs aktív thread" });
+      await safeReply(ctx, escapeHTML("Nincs aktív thread ID, amit át lehetne adni."), {
+        fallbackText: "Nincs aktív thread ID, amit át lehetne adni.",
+      });
+      return;
+    }
+
+    await ctx.answerCallbackQuery({ text: "Átadás..." });
+    const handedBack = session.handback();
+    updateSessionMetadata(contextKey, session);
+    const threadId = handedBack.threadId ?? info.threadId;
+    const workspace = handedBack.workspace;
+    const shellEscape = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`;
+    const resumeCommand = `cd ${shellEscape(workspace)} && codex resume ${shellEscape(threadId)}`;
+    const handoff: ContextHandoff = {
+      status: "pending_vsc_pickup",
+      workspace,
+      threadId,
+      sourceHost: config.hostLabel,
+      targetHost: config.hostLabel,
+      createdAt: new Date().toISOString(),
+    };
+    registry.setHandoff(contextKey, handoff);
+    await appendHandoffOutboxRecord(config, {
+      kind: "handback",
+      contextKey,
+      handoff,
+      resumeCommand,
+    });
+    const lines = [
+      "Szál visszaadva a Codex CLI-nek.",
+      "",
+      "Ezt futtasd a terminálban:",
+      resumeCommand,
+      "",
+      `Ha mégis Telegramon folytatnád: /attach ${threadId}`,
+    ];
+    await safeReply(ctx, escapeHTML(lines.join("\n")), { fallbackText: lines.join("\n") });
   });
 
   handlePageCallback(/^sess_page_(\d+)$/, "sess", pendingSessionButtons, "Lejárt, futtasd újra: /sessions");
@@ -2666,7 +3108,7 @@ export function createBot(
     try {
       const buffer = await readFile(tempFilePath);
       stagedFile = await stageFile(buffer, originalName, mimeType, {
-        workspace,
+        stateDir: config.stateDir,
         turnId,
         maxFileSize: config.maxFileSize,
       });
@@ -2688,7 +3130,7 @@ export function createBot(
     // Keep typing visible during the gap between staging and prompt execution
     await ctx.api.sendChatAction(chatId, "typing").catch(() => {});
 
-    const outDir = outboxPath(workspace, turnId);
+    const outDir = outboxPath(config.stateDir, turnId);
     await ensureOutDir(outDir);
 
     const promptInput: CodexPromptInput = {
@@ -2712,7 +3154,7 @@ export function createBot(
       } catch (artifactError) {
         console.error("Failed to deliver artifacts:", artifactError);
       } finally {
-        await cleanupInbox(workspace, turnId);
+        await cleanupInbox(config.stateDir, turnId);
         // TODO: prune old outbox turn folders by age or count to avoid unbounded growth
       }
     }
@@ -2733,6 +3175,9 @@ export async function registerCommands(bot: Bot<Context>): Promise<void> {
     { command: "new", description: "Új szál indítása" },
     { command: "projekts", description: "Projekt választása ehhez a chathez" },
     { command: "session", description: "Aktuális szál adatai" },
+    { command: "doctor", description: "Bot, auth, repo és watchdog állapot" },
+    { command: "git", description: "Aktuális repo git állapota" },
+    { command: "repo", description: "Workspace, repo és AGENTS.md lánc" },
     { command: "sessions", description: "Szálak böngészése és váltása" },
     { command: "retry", description: "Utolsó kérés újraküldése" },
     { command: "abort", description: "Futó művelet megszakítása" },
@@ -2744,8 +3189,11 @@ export async function registerCommands(bot: Bot<Context>): Promise<void> {
     { command: "logout", description: "Kijelentkezés" },
     { command: "voice", description: "Hangfelismerés állapota" },
     { command: "watchdog", description: "Bridge állapotkép" },
+    { command: "notes", description: "Bot-saját operator jegyzet mentése" },
+    { command: "commit", description: "Biztonságos commit-flow push nélkül" },
     { command: "restart", description: "Bot finom újraindítása megerősítéssel" },
     { command: "stop", description: "Bot leállítása megerősítéssel" },
+    { command: "handoff", description: "Handoff menü" },
     { command: "handback", description: "Szál visszaadása Codex CLI-nek" },
     { command: "handoff_to", description: "Szál átadása célgépnek" },
     { command: "attach", description: "Codex szál csatolása ehhez a témához" },
@@ -3442,4 +3890,13 @@ function renderPromptFailure(accumulatedText: string, error: unknown): string {
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isUnsafeCommitPath(filePath: string): boolean {
+  const normalized = filePath.replace(/\\/g, "/").toLowerCase();
+  const basename = normalized.split("/").pop() ?? normalized;
+  if (basename === ".env" || (basename.startsWith(".env.") && basename !== ".env.example")) {
+    return true;
+  }
+  return normalized.includes("/.telecodex/") || normalized.startsWith(".telecodex/");
 }

@@ -74,6 +74,25 @@ describe("workspace helpers", () => {
     ).toEqual([path.join(workspaceRoot, "email-header-analyzer")]);
   });
 
+  it("filters old non-project cwd values outside the workspace root", () => {
+    const config = createConfig();
+    const outsideDir = path.join(tempDir, "System32");
+    const outsideProject = path.join(tempDir, "outside-project");
+    mkdirSync(outsideDir, { recursive: true });
+    mkdirSync(path.join(outsideProject, ".git"), { recursive: true });
+
+    expect(
+      normalizeWorkspaceList(config, [
+        outsideDir,
+        outsideProject,
+        path.join(workspaceRoot, "AttysCodexBridge"),
+      ]),
+    ).toEqual([
+      path.join(workspaceRoot, "AttysCodexBridge"),
+      outsideProject,
+    ]);
+  });
+
   it("includes the host label in workspace button labels", () => {
     const config = createConfig();
 

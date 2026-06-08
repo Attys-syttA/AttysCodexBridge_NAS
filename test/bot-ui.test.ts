@@ -24,12 +24,18 @@ describe("bot-ui", () => {
       expect(plain).toContain("/handoff_to");
       expect(plain).toContain("/restart");
       expect(plain).toContain("/stop");
+      expect(plain).toContain("/doctor");
+      expect(plain).toContain("/git");
+      expect(plain).toContain("/repo");
+      expect(plain).toContain("/handoff");
+      expect(plain).toContain("/commit");
+      expect(plain).toContain("/notes");
     });
 
-    it("lists all 21 commands", () => {
+    it("lists all 27 commands", () => {
       const { plain } = renderHelpMessage();
       const commandMatches = plain.match(/\/\w+/g) ?? [];
-      expect(commandMatches.length).toBe(21);
+      expect(commandMatches.length).toBe(27);
     });
 
     it("returns valid HTML with bold tags", () => {

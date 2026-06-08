@@ -92,10 +92,14 @@ AttysCodexBridge can also be used in a multi-repo setup: one bot process can ser
 | `/new` | Start a fresh thread (workspace picker if multiple workspaces) |
 | `/projekts` | Pick the active project for this chat and start a fresh thread there |
 | `/session` | Current thread ID, workspace, model, effort, and token totals |
+| `/doctor` | Read-only bot/auth/repo/watchdog health summary |
+| `/git` | Read-only git status for the active detected repo |
+| `/repo` | Show active workspace, detected repo root, and applicable `AGENTS.md` files |
 | `/sessions` | Browse recent threads grouped by workspace; tap to switch |
 | `/switch <id>` | Switch directly to a thread by ID |
 | `/retry` | Resend the last prompt |
 | `/abort` | Cancel the current turn |
+| `/commit` | Confirmation-based local commit flow; never pushes |
 | `/launch_profiles` | Select launch profile for new or reattached threads (`/launch` alias kept) |
 | `/model` | View and change the model |
 | `/effort` | Set reasoning effort: `minimal` · `low` · `medium` · `high` · `xhigh` |
@@ -103,6 +107,8 @@ AttysCodexBridge can also be used in a multi-repo setup: one bot process can ser
 | `/login` | Start Codex device-auth flow from Telegram |
 | `/logout` | Sign out of Codex |
 | `/voice` | Check voice transcription backend status |
+| `/notes` | Write a bot-owned operator note under `.telecodex/operator-notes` |
+| `/handoff` | Button menu for handoff actions |
 | `/handback` | Print `codex resume <id>` for CLI handoff |
 | `/attach <id>` | Bind an existing Codex thread to this forum topic |
 
@@ -196,6 +202,20 @@ AttysCodexBridge will then:
 - keep Telegram session state outside the target repos
 - discover likely project folders under the shared root
 - continue to list old workspaces seen in existing Codex threads from `~/.codex`
+
+### Bot-owned runtime state
+
+Keep `TELECODEX_STATE_DIR` inside the AttysCodexBridge repo, for example:
+
+```powershell
+<CODEX_WORKS>\AttysCodexBridge\.telecodex
+```
+
+All bot-owned runtime data belongs there: health, contexts, watchdog state, handoff inbox/outbox, uploaded file staging, returned artifacts, operator notes, and operator events. Target repositories should not receive `.telecodex` folders as a side effect of Telegram work.
+
+When Codex works on a concrete target repo, that repo's own `AGENTS.md` rules still apply. If the target repo requires `STATE.md` or `docs/CHANGELOG.dev.md` updates, write only target-repo facts there. Do not write bot lifecycle data, Telegram session details, watchdog status, PID, restart/stop state, or other AttysCodexBridge operational data into target repo docs.
+
+`/commit` is intentionally local-only: it can create a commit after confirmation and checks, but it does not push. Push from a network-enabled Codex/VS Code session when appropriate.
 
 ## Handoff: Telegram → CLI
 

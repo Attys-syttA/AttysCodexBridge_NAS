@@ -71,7 +71,12 @@ export interface CreateOptions {
   resumeThreadId?: string;
 }
 
-export type CodexPromptInput = string | { text?: string; imagePaths?: string[]; stagedFileInstructions?: string };
+export type CodexPromptInput = string | {
+  text?: string;
+  imagePaths?: string[];
+  stagedFileInstructions?: string;
+  policyPreamble?: string;
+};
 
 export interface SwitchSessionOptions {
   workspaceOverride?: string;
@@ -417,6 +422,9 @@ export class CodexSessionService {
     const parts: UserInput[] = [];
     const textParts: string[] = [];
 
+    if (input.policyPreamble) {
+      textParts.push(input.policyPreamble);
+    }
     if (input.stagedFileInstructions) {
       textParts.push(input.stagedFileInstructions);
     }

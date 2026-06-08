@@ -11,7 +11,7 @@ export interface StagedFile {
 }
 
 export interface StageOptions {
-  workspace: string;
+  stateDir: string;
   turnId: string;
   maxFileSize: number;
 }
@@ -29,12 +29,12 @@ export function sanitizeFilename(name: string): string {
   return cleaned || `file-${randomUUID().slice(0, 8)}`;
 }
 
-export function inboxPath(workspace: string, turnId: string): string {
-  return path.join(workspace, ".telecodex", "inbox", turnId);
+export function inboxPath(stateDir: string, turnId: string): string {
+  return path.join(stateDir, "inbox", turnId);
 }
 
-export function outboxPath(workspace: string, turnId: string): string {
-  return path.join(workspace, ".telecodex", "turns", turnId, "out");
+export function outboxPath(stateDir: string, turnId: string): string {
+  return path.join(stateDir, "turns", turnId, "out");
 }
 
 export async function stageFile(
@@ -50,7 +50,7 @@ export async function stageFile(
   }
 
   const safeName = sanitizeFilename(originalName);
-  const dir = inboxPath(options.workspace, options.turnId);
+  const dir = inboxPath(options.stateDir, options.turnId);
   await mkdir(dir, { recursive: true });
 
   const localPath = path.join(dir, safeName);
@@ -83,8 +83,8 @@ export function buildFileInstructions(files: StagedFile[], outDir: string): stri
   return lines.join("\n");
 }
 
-export async function cleanupInbox(workspace: string, turnId: string): Promise<void> {
-  const dir = inboxPath(workspace, turnId);
+export async function cleanupInbox(stateDir: string, turnId: string): Promise<void> {
+  const dir = inboxPath(stateDir, turnId);
   try {
     await rm(dir, { recursive: true, force: true });
   } catch {
