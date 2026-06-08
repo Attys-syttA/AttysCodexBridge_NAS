@@ -40,6 +40,7 @@ import { contextKeyFromCtx, isTopicContextKey, parseContextKey, type TelegramCon
 import { friendlyErrorText } from "./error-messages.js";
 import { escapeHTML, formatTelegramHTML } from "./format.js";
 import { createRuntimeHealthMonitor, type RuntimeHealthMonitor } from "./health.js";
+import { findHandoffInboxRecord, removeHandoffInboxRecord } from "./handoff-inbox.js";
 import { SessionRegistry, type ContextHandoff } from "./session-registry.js";
 import { getAvailableBackends, transcribeAudio } from "./voice.js";
 import { formatWorkspaceButtonLabel } from "./workspace.js";
@@ -195,13 +196,38 @@ export function createBot(
     });
   };
 
-  const blockPromptForPendingHandoff = async (ctx: Context, contextKey: TelegramContextKey): Promise<boolean> => {
-    const handoff = (await loadHandoffInboxRecord(config, contextKey)) ?? registry.getHandoff(contextKey);
+  const blockPromptForPendingHandoff = async (
+    ctx: Context,
+    contextKey: TelegramContextKey,
+    session: CodexSessionService,
+  ): Promise<boolean> => {
+    const inboxHandoff = await loadHandoffInboxRecord(config, contextKey);
+    const handoff = inboxHandoff ?? registry.getHandoff(contextKey);
     if (handoff) {
       registry.setHandoff(contextKey, handoff);
     }
 
     if (!handoff || !shouldBlockPromptForHandoff(handoff)) {
+      if (inboxHandoff?.status === "attached" && inboxHandoff.threadId) {
+        if (isBusy(contextKey)) {
+          await safeReply(ctx, escapeHTML("Futó kérés közben nem lehet átadott szálra váltani."), {
+            fallbackText: "Futó kérés közben nem lehet átadott szálra váltani.",
+          });
+          return true;
+        }
+
+        try {
+          const info = await session.switchSession(inboxHandoff.threadId, inboxHandoff.workspace);
+          updateSessionMetadata(contextKey, session);
+          setAttachedHandoff(contextKey, info, inboxHandoff.sourceHost);
+          await clearHandoffInboxRecord(config, contextKey);
+        } catch (error) {
+          await safeReply(ctx, `<b>Nem sikerült:</b> ${escapeHTML(friendlyErrorText(error))}`, {
+            fallbackText: `Nem sikerült: ${friendlyErrorText(error)}`,
+          });
+          return true;
+        }
+      }
       return false;
     }
 
@@ -2243,7 +2269,7 @@ export function createBot(
   });
 
   bot.on("message:text", async (ctx) => {
-    const contextSession = await getContextSession(ctx);
+    const contextSession = await getContextSession(ctx, { deferThreadStart: true });
     if (!contextSession) {
       return;
     }
@@ -2254,7 +2280,7 @@ export function createBot(
     }
 
     const { contextKey, session } = contextSession;
-    if (await blockPromptForPendingHandoff(ctx, contextKey)) {
+    if (await blockPromptForPendingHandoff(ctx, contextKey, session)) {
       return;
     }
 
@@ -2269,14 +2295,14 @@ export function createBot(
   });
 
   bot.on(["message:voice", "message:audio"], async (ctx) => {
-    const contextSession = await getContextSession(ctx);
+    const contextSession = await getContextSession(ctx, { deferThreadStart: true });
     if (!contextSession) {
       return;
     }
 
     const { contextKey, session } = contextSession;
     const chatId = ctx.chat.id;
-    if (await blockPromptForPendingHandoff(ctx, contextKey)) {
+    if (await blockPromptForPendingHandoff(ctx, contextKey, session)) {
       return;
     }
 
@@ -2342,14 +2368,14 @@ export function createBot(
   });
 
   bot.on("message:photo", async (ctx) => {
-    const contextSession = await getContextSession(ctx);
+    const contextSession = await getContextSession(ctx, { deferThreadStart: true });
     if (!contextSession) {
       return;
     }
 
     const { contextKey, session } = contextSession;
     const chatId = ctx.chat.id;
-    if (await blockPromptForPendingHandoff(ctx, contextKey)) {
+    if (await blockPromptForPendingHandoff(ctx, contextKey, session)) {
       return;
     }
 
@@ -2401,14 +2427,14 @@ export function createBot(
   });
 
   bot.on("message:document", async (ctx) => {
-    const contextSession = await getContextSession(ctx);
+    const contextSession = await getContextSession(ctx, { deferThreadStart: true });
     if (!contextSession) {
       return;
     }
 
     const { contextKey, session } = contextSession;
     const chatId = ctx.chat.id;
-    if (await blockPromptForPendingHandoff(ctx, contextKey)) {
+    if (await blockPromptForPendingHandoff(ctx, contextKey, session)) {
       return;
     }
 
@@ -2957,42 +2983,9 @@ async function loadHandoffInboxRecord(
   contextKey: TelegramContextKey,
 ): Promise<ContextHandoff | undefined> {
   const inboxPathname = path.join(config.stateDir, "handoff-inbox.json");
-  let raw: string;
   try {
-    raw = await readFile(inboxPathname, "utf8");
-  } catch {
-    return undefined;
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    const candidates = Array.isArray(parsed)
-      ? parsed
-      : parsed && typeof parsed === "object"
-        ? Object.entries(parsed as Record<string, unknown>).map(([key, value]) => ({
-            contextKey: key,
-            ...(value && typeof value === "object" ? value : {}),
-          }))
-        : [];
-
-    const entry = candidates.find((candidate) =>
-      candidate &&
-      typeof candidate === "object" &&
-      (candidate as { contextKey?: unknown }).contextKey === contextKey,
-    ) as ({ contextKey?: unknown; handoff?: unknown } & Partial<ContextHandoff>) | undefined;
-    const handoff = entry?.handoff && typeof entry.handoff === "object"
-      ? (entry.handoff as Partial<ContextHandoff>)
-      : entry;
-
-    if (!isContextHandoff(handoff)) {
-      return undefined;
-    }
-
-    if (handoff.expiresAt && Date.parse(handoff.expiresAt) <= Date.now()) {
-      return undefined;
-    }
-
-    return handoff;
+    const raw = await readFile(inboxPathname, "utf8");
+    return findHandoffInboxRecord(raw, contextKey);
   } catch {
     return undefined;
   }
@@ -3008,42 +3001,10 @@ async function clearHandoffInboxRecord(config: TeleCodexConfig, contextKey: Tele
   }
 
   try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (Array.isArray(parsed)) {
-      const remaining = parsed.filter((entry) =>
-        !entry ||
-        typeof entry !== "object" ||
-        (entry as { contextKey?: unknown }).contextKey !== contextKey,
-      );
-      await writeFile(inboxPathname, JSON.stringify(remaining, null, 2), "utf8");
-      return;
-    }
-
-    if (parsed && typeof parsed === "object") {
-      const next = { ...(parsed as Record<string, unknown>) };
-      delete next[contextKey];
-      await writeFile(inboxPathname, JSON.stringify(next, null, 2), "utf8");
-    }
+    await writeFile(inboxPathname, removeHandoffInboxRecord(raw, contextKey), "utf8");
   } catch {
     return;
   }
-}
-
-function isContextHandoff(value: unknown): value is ContextHandoff {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-
-  const candidate = value as Partial<ContextHandoff>;
-  return (
-    (candidate.status === "none" ||
-      candidate.status === "pending_inbound" ||
-      candidate.status === "attached" ||
-      candidate.status === "pending_vsc_pickup") &&
-    typeof candidate.workspace === "string" &&
-    (typeof candidate.threadId === "string" || candidate.threadId === null) &&
-    typeof candidate.createdAt === "string"
-  );
 }
 
 function splitMarkdownForTelegram(markdown: string): RenderedChunk[] {

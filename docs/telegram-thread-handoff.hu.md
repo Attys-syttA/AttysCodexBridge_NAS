@@ -74,9 +74,49 @@ Mit nem fogsz látni?
 - A VS Code chat panel nem fogja automatikusan visszamenőleg kirajzolni a Telegram üzeneteket.
 - A folytatás kontextusa megvan, de a felületek nem tükrözik egymás teljes chatnaplóját.
 
-## Gépről Telegramra: `/attach <thread-id>`
+## Gépről Telegramra: VSC/Codex átadó script
 
-Ezt akkor használd, ha egy már létező Codex threadet akarsz Telegramon folytatni.
+Ezt akkor használd, ha a gépen futó VS Code / Codex Agent munkát akarod Telegramon folytatni.
+
+Lépések:
+
+1. Keresd meg a gépen futó Codex szál `thread ID` értékét.
+2. Menj abba a workspace-be, amelyikhez a VSC/Codex munka tartozik.
+3. Futtasd az átadó scriptet:
+
+   ```powershell
+   <CODEX_WORKS>\AttysCodexBridge\scripts\send-vsc-handoff.ps1 -ThreadId <thread-id>
+   ```
+
+   Ha nem abból a workspace-ből futtatod, add meg külön:
+
+   ```powershell
+   <CODEX_WORKS>\AttysCodexBridge\scripts\send-vsc-handoff.ps1 -ThreadId <thread-id> -Workspace <CODEX_WORKS>\AttysCodexBridge
+   ```
+
+4. A script Telegram üzenetet küld, és `.telecodex/handoff-inbox.json` rekordot ír.
+5. Ha válaszolsz erre Telegramon, a bot előbb átvált a megadott `thread ID` + `Workspace` párra, és csak utána küldi be az üzenetedet Codexnek.
+
+Alapértelmezés:
+
+- a script `attached` állapotot ír, tehát az első Telegram válasz már folytatás
+- ha előbb megerősítést akarsz kérni, használd:
+
+  ```powershell
+  <CODEX_WORKS>\AttysCodexBridge\scripts\send-vsc-handoff.ps1 -ThreadId <thread-id> -Pending
+  ```
+
+Szintetikus ellenőrzés Telegram küldés és fájlírás nélkül:
+
+```powershell
+<CODEX_WORKS>\AttysCodexBridge\scripts\send-vsc-handoff.ps1 -ThreadId <thread-id> -DryRun
+```
+
+Fontos: ez a script nem a Telegram chat korábbi állapotából találgat. Mindig a megadott `thread ID` és az aktuális vagy megadott `Workspace` kerül átadásra.
+
+## Gépről Telegramra: kézi `/attach <thread-id>`
+
+Ezt akkor használd, ha egy már létező Codex threadet kézzel akarsz Telegramon folytatni.
 
 Lépések:
 

@@ -108,6 +108,14 @@ AttysCodexBridge can also be used in a multi-repo setup: one bot process can ser
 
 For the practical handoff workflow between Telegram and Codex CLI / VS Code, see [docs/telegram-thread-handoff.hu.md](docs/telegram-thread-handoff.hu.md).
 
+From VS Code / Codex Agent side, send a concrete thread handoff to Telegram with:
+
+```powershell
+.\scripts\send-vsc-handoff.ps1 -ThreadId <thread-id> -Workspace <project-path>
+```
+
+Use `-DryRun` to verify the generated handoff record without writing `.telecodex` or calling Telegram.
+
 ### Voice, image & file input
 
 - **Voice / audio** — send any voice message or audio file; AttysCodexBridge transcribes it and sends the result to Codex
@@ -199,6 +207,16 @@ AttysCodexBridge will then:
 3. Paste and run in your terminal
 
 On macOS the command is also copied to the clipboard automatically.
+
+## Handoff: VS Code / Codex Agent → Telegram
+
+Run the sender script from the workspace you want to continue, or pass `-Workspace` explicitly:
+
+```powershell
+.\scripts\send-vsc-handoff.ps1 -ThreadId <thread-id>
+```
+
+The script writes `.telecodex/handoff-inbox.json` and sends a direct Telegram Bot API message. By default the handoff is `attached`, so the first Telegram reply continues that exact Codex thread and workspace. Add `-Pending` if you want Telegram to ask for `/attach <thread-id>` or `/new` confirmation first.
 
 ## Architecture
 
