@@ -1,6 +1,6 @@
 # Story 02: File Ingest And Artifact Delivery
 
-TeleCodex currently supports text, voice/audio transcription, and photos, but not the broader file workflow that serious remote coding requires. Users need to send logs, patches, repro archives, PDFs, and source files into a turn, and they need generated artifacts back out. This story adds a practical file pipeline without waiting for arbitrary binary support from the Codex SDK input surface.
+AttysCodexBridge currently supports text, voice/audio transcription, and photos, but not the broader file workflow that serious remote coding requires. Users need to send logs, patches, repro archives, PDFs, and source files into a turn, and they need generated artifacts back out. This story adds a practical file pipeline without waiting for arbitrary binary support from the Codex SDK input surface.
 
 ## Architecture Context And Reuse Guidance
 
@@ -83,7 +83,7 @@ OpenAI constraint to respect:
 
 ## Acceptance Criteria
 
-- A Telegram document can be sent to TeleCodex and becomes available to Codex inside the active workspace without manual operator intervention.
+- A Telegram document can be sent to AttysCodexBridge and becomes available to Codex inside the active workspace without manual operator intervention.
 - Image handling continues to work exactly as before.
 - Codex receives clear instructions about where non-image files were staged and where output files should be written.
 - Files written to the configured turn output directory are uploaded back to Telegram after the turn completes.
@@ -94,4 +94,3 @@ OpenAI constraint to respect:
 - Decide whether archives should be unpacked in this story or deferred. The default should be "no unpacking unless explicitly configured" to avoid security surprises.
 - Telegram has message and upload size constraints; artifact sending needs a fallback path for oversize outputs.
 - If the Codex SDK later adds a first-class local-file input type, this story should still keep the workspace staging model because artifact return remains valuable.
-

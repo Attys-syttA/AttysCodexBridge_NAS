@@ -9,11 +9,13 @@
     "url": "https://github.com/Attys-syttA/AttysCodexBridge"
   },
   "keywords": [
-    "telegram",
+    "telegram-bot",
     "codex",
     "openai",
-    "bot",
-    "cli",
+    "openai-codex",
+    "chatops",
+    "developer-tools",
+    "typescript",
     "bridge"
   ],
   "type": "module",

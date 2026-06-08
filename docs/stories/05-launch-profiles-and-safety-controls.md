@@ -1,10 +1,10 @@
 # Story 05: Launch Profiles And Safety Controls
 
-TeleCodex already supports `sandboxMode` and `approvalPolicy` through global environment defaults, but operators cannot change how Codex is launched per Telegram context. This story adds named launch profiles and a Telegram picker so an allowed user can choose between safe, read-only, and explicitly unsafe launch modes without editing `.env` or restarting the bot. The implementation must preserve the current SDK-based architecture, keep legacy env variables working, and add clear safety rails around any profile that uses `danger-full-access`.
+AttysCodexBridge already supports `sandboxMode` and `approvalPolicy` through global environment defaults, but operators cannot change how Codex is launched per Telegram context. This story adds named launch profiles and a Telegram picker so an allowed user can choose between safe, read-only, and explicitly unsafe launch modes without editing `.env` or restarting the bot. The implementation must preserve the current SDK-based architecture, keep legacy env variables working, and add clear safety rails around any profile that uses `danger-full-access`.
 
 ## Architecture Context And Reuse Guidance
 
-TeleCodex already has most of the plumbing needed for this feature. The implementation should extend existing patterns rather than invent a second launch stack.
+AttysCodexBridge already has most of the plumbing needed for this feature. The implementation should extend existing patterns rather than invent a second launch stack.
 
 - `src/config.ts` already parses `CODEX_SANDBOX_MODE` and `CODEX_APPROVAL_POLICY` and should remain the backward-compatible bootstrap source for the default launch behavior.
 - `src/codex-session.ts` already centralizes Codex thread creation in `buildThreadOptions()`. Keep launch-option assembly there. Do not add a new CLI backend or bypass the SDK just to support launch variants.
@@ -50,7 +50,7 @@ That module is justified because launch-profile parsing and safety checks would 
   - effective approval policy
 - Keep behavior explicit:
   - changing `/launch` does not mutate an already-created active thread object in place
-  - the new launch profile applies the next time TeleCodex creates or resumes a thread in that Telegram context
+  - the new launch profile applies the next time AttysCodexBridge creates or resumes a thread in that Telegram context
   - user-facing copy must say “applies to new or reattached threads” rather than implying instant mutation
 - Add `/launch` command with an inline picker:
   - safe profiles can be selected immediately
@@ -71,7 +71,7 @@ Security pass requirements:
 - Never trust callback payloads alone. A selected profile id must be validated against the current configured profile registry and the context’s pending picker state.
 - Unsafe confirmation must be one-shot and context-scoped. Do not let an old confirmation button activate a dangerous profile after the picker state has expired.
 - Do not let Telegram users construct arbitrary sandbox or approval values. The bot may only select from validated configured profiles.
-- If `ENABLE_UNSAFE_LAUNCH_PROFILES` is false, TeleCodex must fail fast at startup when `CODEX_LAUNCH_PROFILES_JSON` contains any extra profile using `danger-full-access`.
+- If `ENABLE_UNSAFE_LAUNCH_PROFILES` is false, AttysCodexBridge must fail fast at startup when `CODEX_LAUNCH_PROFILES_JSON` contains any extra profile using `danger-full-access`.
 - If the legacy default env resolves to `danger-full-access`, preserve backward compatibility but log a clear warning at startup and mark the profile as unsafe in UI.
 
 ## File Touch List
@@ -176,20 +176,20 @@ Security pass requirements:
 
 ## Acceptance Criteria
 
-- TeleCodex supports named launch profiles that control Codex sandbox and approval behavior per Telegram context.
+- AttysCodexBridge supports named launch profiles that control Codex sandbox and approval behavior per Telegram context.
 - Existing installs that only use `CODEX_SANDBOX_MODE` and `CODEX_APPROVAL_POLICY` continue to work without config changes.
 - An allowed Telegram user can inspect and change the current launch profile using `/launch`.
 - The selected launch profile is persisted per Telegram context and survives process restart.
 - `/session`, `/start`, and `/new` success messages show the effective launch behavior clearly enough that an operator can see whether the context is running in a safe or unsafe mode.
 - Unsafe profiles using `danger-full-access` require explicit confirmation before activation from Telegram.
 - Stale or forged callback data cannot activate a profile that is not currently pending and configured.
-- If unsafe launch profiles are disabled, TeleCodex does not expose extra dangerous profiles in Telegram.
-- If a saved launch profile is removed from config, TeleCodex falls back to the configured default profile rather than failing deep in session creation.
+- If unsafe launch profiles are disabled, AttysCodexBridge does not expose extra dangerous profiles in Telegram.
+- If a saved launch profile is removed from config, AttysCodexBridge falls back to the configured default profile rather than failing deep in session creation.
 - The implementation remains SDK-based and does not add a separate Codex CLI execution path just for launch modes.
 - Tests cover config parsing, session wiring, persistence, UI selection flow, and unsafe-profile security checks.
 
 ## Risks And Open Questions
 
 - `CODEX_LAUNCH_PROFILES_JSON` is the simplest config shape for this repo, but JSON-in-env is less ergonomic than flat vars. That tradeoff is acceptable here because the repository already uses simple env loading and should avoid a larger config-file system.
-- Launch selection only affects newly created or newly resumed TeleCodex threads. If operators expect an in-place change on an already active thread, the UI must state the actual behavior clearly.
-- The generated `agent-tools/project-index/PROJECT_MAP.md` is clearly inherited from another repo template and should not be treated as authoritative architecture documentation for TeleCodex. Implementation should follow the actual source tree and tests in this repository instead.
+- Launch selection only affects newly created or newly resumed AttysCodexBridge threads. If operators expect an in-place change on an already active thread, the UI must state the actual behavior clearly.
+- The generated `agent-tools/project-index/PROJECT_MAP.md` is clearly inherited from another repo template and should not be treated as authoritative architecture documentation for AttysCodexBridge. Implementation should follow the actual source tree and tests in this repository instead.

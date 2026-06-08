@@ -1,6 +1,6 @@
 # Story 01: Per-Context Session Runtime
 
-TeleCodex currently runs as a single shared `CodexSessionService` instance for the entire bot process. That keeps the implementation simple, but it caps the product at one active conversation at a time and prevents Telegram chats or forum topics from behaving like independent workspaces. This story upgrades the runtime so each Telegram context gets its own Codex session state and processing lifecycle.
+AttysCodexBridge currently runs as a single shared `CodexSessionService` instance for the entire bot process. That keeps the implementation simple, but it caps the product at one active conversation at a time and prevents Telegram chats or forum topics from behaving like independent workspaces. This story upgrades the runtime so each Telegram context gets its own Codex session state and processing lifecycle.
 
 ## Architecture Context And Reuse Guidance
 
@@ -12,7 +12,7 @@ Patterns to borrow:
 - `Headcrab/telecodex`: one logical session per Telegram chat/topic pair.
 - `yschaub/codex-telegram`: persistent session-per-project behavior and explicit isolation between contexts.
 
-Keep these TeleCodex strengths:
+Keep these AttysCodexBridge strengths:
 
 - streamed tool output and todo rendering
 - `~/.codex` thread browsing via `src/codex-state.ts`
@@ -86,4 +86,3 @@ Do not copy competitor command surfaces wholesale. Reuse their session-scoping a
 - Decide whether persistence should be JSON on disk or SQLite. JSON is simpler; SQLite scales better once story 03 introduces richer topic metadata.
 - The current `CodexSessionService` API is small, so this refactor should stay incremental. Avoid turning it into a generic framework.
 - If multiple allowed users are present later, story 01 should keep the runtime ready for that, but ACL roles are out of scope here.
-

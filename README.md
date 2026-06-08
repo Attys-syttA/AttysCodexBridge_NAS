@@ -10,7 +10,7 @@ This repository is a custom continuation built on the original core from `benedi
 - **Streaming responses** — agent text edits in-place as Codex generates it
 - **Full tool visibility** — shell commands, file changes, web searches, MCP calls, and error items shown with configurable verbosity
 - **Live plan display** — Codex's todo list rendered as a separate message and updated as steps complete
-- **Voice transcription** — send a voice message or audio file; TeleCodex transcribes it (local parakeet-coreml or OpenAI Whisper) and forwards the text to Codex
+- **Voice transcription** — send a voice message or audio file; AttysCodexBridge transcribes it (local parakeet-coreml or OpenAI Whisper) and forwards the text to Codex
 - **Image input** — send a photo (with optional caption) to pass screenshots or images directly to Codex
 - **File ingest & artifacts** — send a document to stage it for Codex; generated files are delivered back as Telegram documents
 - **Session browser** — `/sessions` lists recent threads from `~/.codex`, grouped by workspace; tap to switch
@@ -73,7 +73,7 @@ AttysCodexBridge can also be used in a multi-repo setup: one bot process can ser
 
    | Variable | Description |
    |---|---|
-   | `TELECODEX_WORKSPACE_ROOT` | Parent folder to scan for candidate project directories, e.g. `<CODEX_WORKS_ON_WORK_PC>` |
+   | `TELECODEX_WORKSPACE_ROOT` | Parent folder to scan for candidate project directories, e.g. `<CODEX_WORKS>` |
    | `TELECODEX_DEFAULT_WORKSPACE` | Default project folder for fresh contexts before you switch or start a new thread |
    | `TELECODEX_STATE_DIR` | Folder used for AttysCodexBridge state such as `contexts.json`, inbox, and outbox |
 
