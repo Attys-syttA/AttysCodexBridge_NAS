@@ -176,9 +176,9 @@ Each context has independent busy-state tracking, so a running prompt in one top
 
 If you want one Telegram bot to work across several local repos on the same machine:
 
-1. Set `TELECODEX_WORKSPACE_ROOT` to a parent folder that contains your projects, for example `<CODEX_WORKS_ON_WORK_PC>`.
+1. Set `TELECODEX_WORKSPACE_ROOT` to a parent folder that contains your projects, for example `<CODEX_WORKS>`.
 2. Optionally set `TELECODEX_DEFAULT_WORKSPACE` to the repo you use most often.
-3. Set `TELECODEX_STATE_DIR` to a folder owned by AttysCodexBridge itself, for example `<CODEX_WORKS_ON_WORK_PC>\telecodex\.telecodex`.
+3. Set `TELECODEX_STATE_DIR` to a folder owned by AttysCodexBridge itself, for example `<ATTYS_CODEX_BRIDGE_ROOT>\.telecodex`.
 4. Use `/projekts` in Telegram to pick a different repo when needed.
 
 AttysCodexBridge will then:
