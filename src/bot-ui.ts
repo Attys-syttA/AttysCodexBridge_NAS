@@ -14,6 +14,7 @@ export function renderHelpMessage(): DualText {
       title: "💬 Session",
       commands: [
         ["/new", "Start a new thread"],
+        ["/projekts", "Pick the active project for this chat"],
         ["/session", "Current thread details"],
         ["/sessions", "Browse & switch threads"],
         ["/attach", "Bind a Codex thread to this topic"],

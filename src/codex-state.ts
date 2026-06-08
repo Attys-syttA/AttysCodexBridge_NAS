@@ -130,6 +130,34 @@ export function listWorkspaces(): string[] {
   );
 }
 
+export function discoverWorkspaceDirectories(workspaceRoot: string | undefined): string[] {
+  if (!workspaceRoot || !existsSync(workspaceRoot)) {
+    return [];
+  }
+
+  try {
+    return readdirSync(workspaceRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => path.join(workspaceRoot, entry.name))
+      .filter((candidate) => !path.basename(candidate).startsWith("."))
+      .filter(isWorkspaceCandidate)
+      .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }));
+  } catch {
+    return [];
+  }
+}
+
+function isWorkspaceCandidate(candidate: string): boolean {
+  return (
+    existsSync(path.join(candidate, ".git")) ||
+    existsSync(path.join(candidate, "package.json")) ||
+    existsSync(path.join(candidate, "pyproject.toml")) ||
+    existsSync(path.join(candidate, "Cargo.toml")) ||
+    existsSync(path.join(candidate, "go.mod")) ||
+    existsSync(path.join(candidate, "requirements.txt"))
+  );
+}
+
 export function listModels(): CodexModelRecord[] {
   const modelsPath = getModelsCachePath();
   if (!modelsPath || !existsSync(modelsPath)) {

@@ -20,6 +20,8 @@ export interface TeleCodexConfig {
   telegramAllowedUserIds: number[];
   telegramAllowedUserIdSet: Set<number>;
   workspace: string;
+  workspaceRoot?: string;
+  stateDir: string;
   maxFileSize: number;
   codexApiKey?: string;
   codexModel?: string;
@@ -39,7 +41,9 @@ export function loadConfig(): TeleCodexConfig {
 
   const telegramBotToken = requireEnv("TELEGRAM_BOT_TOKEN");
   const telegramAllowedUserIds = parseAllowedUserIds(requireEnv("TELEGRAM_ALLOWED_USER_IDS"));
-  const workspace = resolveWorkspace();
+  const workspaceRoot = resolveWorkspaceRoot();
+  const workspace = resolveWorkspace(workspaceRoot);
+  const stateDir = resolveStateDir();
   const maxFileSize = parseMaxFileSize(optionalString(process.env.MAX_FILE_SIZE));
   const codexApiKey = optionalString(process.env.CODEX_API_KEY);
   const codexModel = optionalString(process.env.CODEX_MODEL);
@@ -72,6 +76,8 @@ export function loadConfig(): TeleCodexConfig {
     telegramAllowedUserIds,
     telegramAllowedUserIdSet: new Set(telegramAllowedUserIds),
     workspace,
+    workspaceRoot,
+    stateDir,
     maxFileSize,
     codexApiKey,
     codexModel,
@@ -88,15 +94,43 @@ export function loadConfig(): TeleCodexConfig {
 }
 
 /**
- * Workspace is derived automatically:
- * - In Docker: /workspace (the mount point)
- * - Outside Docker: process.cwd()
+ * Optional workspace root used to discover candidate project directories.
+ * Outside Docker this can point to a parent folder like <CODEX_WORKS_ON_WORK_PC>.
  */
-function resolveWorkspace(): string {
+function resolveWorkspaceRoot(): string | undefined {
+  const raw = optionalString(process.env.TELECODEX_WORKSPACE_ROOT);
+  if (!raw) {
+    return isRunningInDocker() ? "/workspace" : undefined;
+  }
+  return path.resolve(raw);
+}
+
+/**
+ * Default workspace for first-turn messages before the user picks a different one.
+ */
+function resolveWorkspace(workspaceRoot?: string): string {
+  const raw = optionalString(process.env.TELECODEX_DEFAULT_WORKSPACE);
+  if (raw) {
+    return path.resolve(raw);
+  }
+
   if (isRunningInDocker()) {
     return "/workspace";
   }
+
+  if (workspaceRoot) {
+    return workspaceRoot;
+  }
+
   return process.cwd();
+}
+
+function resolveStateDir(): string {
+  const raw = optionalString(process.env.TELECODEX_STATE_DIR);
+  if (raw) {
+    return path.resolve(raw);
+  }
+  return path.resolve(process.cwd(), ".telecodex");
 }
 
 function isRunningInDocker(): boolean {

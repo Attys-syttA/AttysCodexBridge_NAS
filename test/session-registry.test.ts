@@ -91,6 +91,8 @@ describe("SessionRegistry", () => {
     telegramAllowedUserIds: [123],
     telegramAllowedUserIdSet: new Set([123]),
     workspace: "/workspace/base",
+    workspaceRoot: "/workspace",
+    stateDir: "/state/telecodex",
     maxFileSize: 20 * 1024 * 1024,
     codexApiKey: "codex-key",
     codexModel: "o3",
@@ -207,7 +209,7 @@ describe("SessionRegistry", () => {
   });
 
   it("restores distinct per-context workspace, model, reasoning effort, and thread ids", async () => {
-    const persistPath = path.join("/workspace/base", ".telecodex", "contexts.json");
+    const persistPath = path.join("/state/telecodex", "contexts.json");
     mockFsState.files.set(
       persistPath,
       JSON.stringify([
@@ -279,7 +281,7 @@ describe("SessionRegistry", () => {
 
   it("falls back to the default launch profile when persisted metadata references a missing profile", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const persistPath = path.join("/workspace/base", ".telecodex", "contexts.json");
+    const persistPath = path.join("/state/telecodex", "contexts.json");
     mockFsState.files.set(
       persistPath,
       JSON.stringify([
@@ -412,7 +414,7 @@ describe("SessionRegistry", () => {
 
   it("persists metadata and reloads it in a new registry", async () => {
     const config = createConfig();
-    const persistPath = path.join(config.workspace, ".telecodex", "contexts.json");
+    const persistPath = path.join(config.stateDir, "contexts.json");
     const registry = new SessionRegistry(config);
     const session = (await registry.getOrCreate("123")) as any;
 

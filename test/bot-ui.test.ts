@@ -16,15 +16,16 @@ describe("bot-ui", () => {
       expect(html).toContain("Auth");
       expect(html).toContain("Utility");
       expect(plain).toContain("/new");
+      expect(plain).toContain("/projekts");
       expect(plain).toContain("/help");
       expect(plain).toContain("/retry");
       expect(plain).toContain("/launch_profiles");
     });
 
-    it("lists all 16 commands", () => {
+    it("lists all 17 commands", () => {
       const { plain } = renderHelpMessage();
       const commandMatches = plain.match(/\/\w+/g) ?? [];
-      expect(commandMatches.length).toBe(16);
+      expect(commandMatches.length).toBe(17);
     });
 
     it("returns valid HTML with bold tags", () => {

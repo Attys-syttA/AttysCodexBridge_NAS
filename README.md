@@ -25,6 +25,8 @@ TeleCodex is a Telegram bridge for the OpenAI Codex CLI SDK. It keeps a Codex th
 
 ## Prerequisites
 
+TeleCodex can also be used in a multi-repo setup: one bot process can serve several local project folders, while keeping its own session state outside those target repos.
+
 - Node.js 22+
 - A Telegram bot token from [@BotFather](https://t.me/BotFather)
 - The Codex CLI installed and authenticated on the host:
@@ -65,6 +67,14 @@ TeleCodex is a Telegram bridge for the OpenAI Codex CLI SDK. It keeps a Codex th
    | `ENABLE_TELEGRAM_REACTIONS` | — | Enable Telegram emoji reactions like 👀 / 👍 (`false` by default) |
    | `OPENAI_API_KEY` | — | Enables OpenAI Whisper voice transcription fallback |
 
+   Add these optional variables when you want one bot to work across several repos:
+
+   | Variable | Description |
+   |---|---|
+   | `TELECODEX_WORKSPACE_ROOT` | Parent folder to scan for candidate project directories, e.g. `<CODEX_WORKS_ON_WORK_PC>` |
+   | `TELECODEX_DEFAULT_WORKSPACE` | Default project folder for fresh contexts before you switch or start a new thread |
+   | `TELECODEX_STATE_DIR` | Folder used for TeleCodex state such as `contexts.json`, inbox, and outbox |
+
 4. Start the bot:
    ```bash
    npm run dev
@@ -77,6 +87,7 @@ TeleCodex is a Telegram bridge for the OpenAI Codex CLI SDK. It keeps a Codex th
 | `/start` | Welcome & status (concise for returning users) |
 | `/help` | Grouped command reference |
 | `/new` | Start a fresh thread (workspace picker if multiple workspaces) |
+| `/projekts` | Pick the active project for this chat and start a fresh thread there |
 | `/session` | Current thread ID, workspace, model, effort, and token totals |
 | `/sessions` | Browse recent threads grouped by workspace; tap to switch |
 | `/switch <id>` | Switch directly to a thread by ID |
@@ -151,12 +162,27 @@ The `SessionRegistry` maps context keys to `CodexSessionService` instances:
 - **First message** in a context → creates a new `CodexSessionService` → starts a new Codex thread
 - **Subsequent messages** → same context key → same session → conversation continues
 - **`/new`** → replaces the thread within the same context (optionally picking a workspace first)
+- **`/projekts`** → picks the active repo for the current chat/topic and starts a fresh thread there
 - **`/sessions`** → lists all Codex threads from `~/.codex`, lets you switch within the current context
 - **`/attach <id>`** → resumes a specific Codex CLI thread (useful for picking up work started in the terminal)
 
 Session metadata (thread ID, workspace, launch profile, model, effort) is persisted to `.telecodex/contexts.json` and restored on restart so threads survive bot reboots.
 
 Each context has independent busy-state tracking, so a running prompt in one topic doesn't block another.
+
+### Multi-repo setup
+
+If you want one Telegram bot to work across several local repos on the same machine:
+
+1. Set `TELECODEX_WORKSPACE_ROOT` to a parent folder that contains your projects, for example `<CODEX_WORKS_ON_WORK_PC>`.
+2. Optionally set `TELECODEX_DEFAULT_WORKSPACE` to the repo you use most often.
+3. Set `TELECODEX_STATE_DIR` to a folder owned by TeleCodex itself, for example `<CODEX_WORKS_ON_WORK_PC>\telecodex\.telecodex`.
+4. Use `/projekts` in Telegram to pick a different repo when needed.
+
+TeleCodex will then:
+- keep Telegram session state outside the target repos
+- discover likely project folders under the shared root
+- continue to list old workspaces seen in existing Codex threads from `~/.codex`
 
 ## Handoff: Telegram → CLI
 

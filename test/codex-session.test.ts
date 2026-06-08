@@ -8,12 +8,14 @@ const mockCodexState = vi.hoisted(() => {
   const listThreads = vi.fn().mockReturnValue([]);
   const listWorkspaces = vi.fn().mockReturnValue([]);
   const listModels = vi.fn().mockReturnValue([]);
+  const discoverWorkspaceDirectories = vi.fn().mockReturnValue([]);
 
   return {
     getThread,
     listThreads,
     listWorkspaces,
     listModels,
+    discoverWorkspaceDirectories,
     reset: () => {
       getThread.mockReset();
       getThread.mockReturnValue(null);
@@ -23,6 +25,8 @@ const mockCodexState = vi.hoisted(() => {
       listWorkspaces.mockReturnValue([]);
       listModels.mockReset();
       listModels.mockReturnValue([]);
+      discoverWorkspaceDirectories.mockReset();
+      discoverWorkspaceDirectories.mockReturnValue([]);
     },
   };
 });
@@ -84,6 +88,7 @@ vi.mock("../src/codex-state.js", () => ({
   listThreads: mockCodexState.listThreads,
   listWorkspaces: mockCodexState.listWorkspaces,
   listModels: mockCodexState.listModels,
+  discoverWorkspaceDirectories: mockCodexState.discoverWorkspaceDirectories,
 }));
 
 import { CodexSessionService } from "../src/codex-session.js";
@@ -100,6 +105,8 @@ describe("CodexSessionService", () => {
     telegramAllowedUserIds: [123],
     telegramAllowedUserIdSet: new Set([123]),
     workspace: "/workspace/base",
+    workspaceRoot: "/workspace",
+    stateDir: "/state/telecodex",
     maxFileSize: 20 * 1024 * 1024,
     codexApiKey: "codex-key",
     codexModel: "o3",
@@ -958,13 +965,20 @@ describe("CodexSessionService", () => {
     expect(mockCodexState.listThreads).toHaveBeenCalledWith(5);
   });
 
-  it("listWorkspaces delegates to codex-state", async () => {
+  it("listWorkspaces merges current, persisted, and discovered workspaces", async () => {
     mockCodexState.listWorkspaces.mockReturnValue(["/workspace/a", "/workspace/b"]);
+    mockCodexState.discoverWorkspaceDirectories.mockReturnValue(["/workspace/c", "/workspace/a"]);
 
     const service = await CodexSessionService.create(createConfig());
 
-    expect(service.listWorkspaces()).toEqual(["/workspace/a", "/workspace/b"]);
+    expect(service.listWorkspaces()).toEqual([
+      "/workspace/a",
+      "/workspace/b",
+      "/workspace/base",
+      "/workspace/c",
+    ]);
     expect(mockCodexState.listWorkspaces).toHaveBeenCalledTimes(1);
+    expect(mockCodexState.discoverWorkspaceDirectories).toHaveBeenCalledWith("/workspace");
   });
 
   it("listModels delegates to codex-state", async () => {

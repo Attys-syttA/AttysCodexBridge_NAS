@@ -16,6 +16,7 @@ type LoadOptions = {
   home?: string;
   files?: string[];
   stats?: Record<string, number>;
+  directories?: string[];
   threads?: ThreadFixture[];
   modelsJson?: string;
   betterSqliteAvailable?: boolean;
@@ -41,6 +42,8 @@ async function loadCodexState(options: LoadOptions = {}) {
   const codexDir = path.join(home, ".codex");
   const modelsPath = path.join(codexDir, "models_cache.json");
   const files = options.files ?? [];
+  const directories = options.directories ?? [];
+  const workspaceRoots = [...new Set(directories.map((directory) => path.dirname(directory)))];
   const stats = options.stats ?? {};
   const threads = options.threads ?? [];
   process.env.HOME = home;
@@ -55,10 +58,21 @@ async function loadCodexState(options: LoadOptions = {}) {
       if (targetPath === modelsPath) {
         return options.modelsJson !== undefined;
       }
-      return files.includes(path.basename(targetPath));
+      if (workspaceRoots.includes(targetPath)) {
+        return true;
+      }
+      if (directories.includes(targetPath)) {
+        return true;
+      }
+      return files.includes(targetPath) || files.includes(path.basename(targetPath));
     }),
     readdirSync: vi.fn((targetPath: string) => {
       if (targetPath !== codexDir) {
+        if (workspaceRoots.includes(targetPath)) {
+          return directories
+            .filter((directory) => path.dirname(directory) === targetPath)
+            .map((directory) => ({ isDirectory: () => true, name: path.basename(directory) }));
+        }
         throw new Error(`Unexpected readdirSync path: ${targetPath}`);
       }
       return files;
@@ -261,6 +275,33 @@ describe("codex-state", () => {
     });
 
     expect(state.listWorkspaces()).toEqual(["/workspace/a", "/workspace/z"]);
+  });
+
+  it("discoverWorkspaceDirectories returns likely repo directories only", async () => {
+    const workspaceRoot = path.join(path.sep, "workspace-root");
+    const projectA = path.join(workspaceRoot, "project-a");
+    const projectB = path.join(workspaceRoot, "project-b");
+    const notes = path.join(workspaceRoot, "notes");
+    const hidden = path.join(workspaceRoot, ".hidden");
+
+    const state = await loadCodexState({
+      directories: [
+        projectA,
+        projectB,
+        notes,
+        hidden,
+      ],
+      files: [
+        "state_main.sqlite",
+        path.join(projectA, "package.json"),
+        path.join(projectB, "requirements.txt"),
+      ],
+    });
+
+    expect(state.discoverWorkspaceDirectories(workspaceRoot)).toEqual([
+      projectA,
+      projectB,
+    ]);
   });
 
   it("listModels parses models_cache.json and filters hidden models", async () => {

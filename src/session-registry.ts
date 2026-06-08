@@ -23,7 +23,7 @@ export class SessionRegistry {
   private onRemoveCallback?: (contextKey: TelegramContextKey) => void;
 
   constructor(private readonly config: TeleCodexConfig) {
-    this.persistPath = path.join(config.workspace, ".telecodex", "contexts.json");
+    this.persistPath = path.join(config.stateDir, "contexts.json");
     this.loadPersistedMetadata();
   }
 

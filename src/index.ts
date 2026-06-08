@@ -20,6 +20,10 @@ try {
     console.warn("Warning: Codex is not authenticated. Use /login or set CODEX_API_KEY.");
   }
   console.log(`Workspace: ${config.workspace}`);
+  if (config.workspaceRoot) {
+    console.log(`Workspace root: ${config.workspaceRoot}`);
+  }
+  console.log(`State dir: ${config.stateDir}`);
   if (config.codexModel) {
     console.log(`Default model: ${config.codexModel}`);
   }

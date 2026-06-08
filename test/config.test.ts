@@ -17,6 +17,9 @@ describe("loadConfig", () => {
     delete process.env.TELEGRAM_ALLOWED_USER_IDS;
     delete process.env.CODEX_API_KEY;
     delete process.env.CODEX_MODEL;
+    delete process.env.TELECODEX_WORKSPACE_ROOT;
+    delete process.env.TELECODEX_DEFAULT_WORKSPACE;
+    delete process.env.TELECODEX_STATE_DIR;
     delete process.env.CODEX_SANDBOX_MODE;
     delete process.env.CODEX_APPROVAL_POLICY;
     delete process.env.CODEX_LAUNCH_PROFILES_JSON;
@@ -67,6 +70,8 @@ describe("loadConfig", () => {
       telegramAllowedUserIds: [123, 456],
       telegramAllowedUserIdSet: new Set([123, 456]),
       workspace: process.cwd(),
+      workspaceRoot: undefined,
+      stateDir: path.join(process.cwd(), ".telecodex"),
       maxFileSize: 20 * 1024 * 1024,
       codexApiKey: "secret-key",
       codexModel: "o3",
@@ -145,6 +150,8 @@ describe("loadConfig", () => {
     expect(config.enableTelegramLogin).toBe(true);
     expect(config.enableTelegramReactions).toBe(false);
     expect(config.workspace).toBe(process.cwd());
+    expect(config.workspaceRoot).toBeUndefined();
+    expect(config.stateDir).toBe(path.join(process.cwd(), ".telecodex"));
   });
 
   it("throws when a user id is invalid", () => {
@@ -221,6 +228,21 @@ describe("loadConfig", () => {
     const config = loadConfig();
 
     expect(config.workspace).toBe("/workspace");
+    expect(config.workspaceRoot).toBe("/workspace");
+  });
+
+  it("parses explicit multi-repo workspace settings", () => {
+    process.env.TELEGRAM_BOT_TOKEN = "bot-token";
+    process.env.TELEGRAM_ALLOWED_USER_IDS = "123";
+    process.env.TELECODEX_WORKSPACE_ROOT = "D:\\codex_works";
+    process.env.TELECODEX_DEFAULT_WORKSPACE = "D:\\codex_works\\email_header_analyzer";
+    process.env.TELECODEX_STATE_DIR = "D:\\codex_works\\telecodex\\.telecodex";
+
+    const config = loadConfig();
+
+    expect(config.workspaceRoot).toBe(path.resolve("D:\\codex_works"));
+    expect(config.workspace).toBe(path.resolve("D:\\codex_works\\email_header_analyzer"));
+    expect(config.stateDir).toBe(path.resolve("D:\\codex_works\\telecodex\\.telecodex"));
   });
 
   it("parses MAX_FILE_SIZE when configured", () => {

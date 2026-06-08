@@ -11,6 +11,7 @@ import {
 
 import type { TeleCodexConfig } from "./config.js";
 import {
+  discoverWorkspaceDirectories,
   getThread,
   listModels,
   listThreads,
@@ -342,7 +343,10 @@ export class CodexSessionService {
   }
 
   listWorkspaces(): string[] {
-    return listWorkspaces();
+    const threadWorkspaces = listWorkspaces();
+    const discoveredWorkspaces = discoverWorkspaceDirectories(this.config.workspaceRoot);
+    const merged = [...new Set([this.currentWorkspace, ...threadWorkspaces, ...discoveredWorkspaces].filter(Boolean))];
+    return merged.sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }));
   }
 
   listModels(): CodexModelRecord[] {

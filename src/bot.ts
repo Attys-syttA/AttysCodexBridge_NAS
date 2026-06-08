@@ -117,8 +117,10 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
   >();
   const pendingSessionPicks = new Map<TelegramContextKey, string[]>();
   const pendingWorkspacePicks = new Map<TelegramContextKey, string[]>();
+  const pendingProjectWorkspacePicks = new Map<TelegramContextKey, string[]>();
   const pendingSessionButtons = new Map<TelegramContextKey, KeyboardItem[]>();
   const pendingWorkspaceButtons = new Map<TelegramContextKey, KeyboardItem[]>();
+  const pendingProjectWorkspaceButtons = new Map<TelegramContextKey, KeyboardItem[]>();
   const pendingLaunchPicks = new Map<TelegramContextKey, string[]>();
   const pendingLaunchButtons = new Map<TelegramContextKey, KeyboardItem[]>();
   const pendingUnsafeLaunchConfirmations = new Map<TelegramContextKey, string>();
@@ -1022,6 +1024,59 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
     });
   });
 
+  bot.command("projekts", async (ctx) => {
+    const chatId = ctx.chat?.id;
+    if (!chatId) {
+      return;
+    }
+
+    const contextSession = await getContextSession(ctx, { deferThreadStart: true });
+    if (!contextSession) {
+      return;
+    }
+
+    const { contextKey, session } = contextSession;
+    if (isBusy(contextKey)) {
+      await safeReply(ctx, escapeHTML("Cannot switch project while a prompt is running."), {
+        fallbackText: "Cannot switch project while a prompt is running.",
+      });
+      return;
+    }
+
+    const workspaces = session.listWorkspaces();
+    if (workspaces.length <= 1) {
+      try {
+        const info = await session.newThread();
+        updateSessionMetadata(contextKey, session);
+        const label = isTopicContext(contextKey)
+          ? "Active project confirmed for this topic."
+          : "Active project confirmed for this chat.";
+        const plainText = `${label}\nProject: ${getWorkspaceShortName(info.workspace)}\n\n${renderSessionInfoPlain(info)}`;
+        const html = `<b>${escapeHTML(label)}</b>\nProject: <code>${escapeHTML(getWorkspaceShortName(info.workspace))}</code>\n\n${renderSessionInfoHTML(info)}`;
+        await safeReply(ctx, html, { fallbackText: plainText });
+      } catch (error) {
+        await safeReply(ctx, `<b>Failed:</b> ${escapeHTML(friendlyErrorText(error))}`, {
+          fallbackText: `Failed: ${friendlyErrorText(error)}`,
+        });
+      }
+      return;
+    }
+
+    pendingProjectWorkspacePicks.set(contextKey, workspaces);
+    const currentWorkspace = session.getCurrentWorkspace();
+    const workspaceButtons = workspaces.map((workspace, index) => ({
+      label: `${workspace === currentWorkspace ? "📂" : "📁"} ${getWorkspaceShortName(workspace)}`,
+      callbackData: `proj_${index}`,
+    }));
+    pendingProjectWorkspaceButtons.set(contextKey, workspaceButtons);
+    const keyboard = paginateKeyboard(workspaceButtons, 0, "proj");
+
+    await safeReply(ctx, "<b>Select project for this chat:</b>", {
+      fallbackText: "Select project for this chat:",
+      replyMarkup: keyboard,
+    });
+  });
+
   bot.command("abort", async (ctx) => {
     const contextSession = await getContextSession(ctx, { deferThreadStart: true });
     if (!contextSession) {
@@ -1467,6 +1522,7 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
   });
   handlePageCallback(/^sess_page_(\d+)$/, "sess", pendingSessionButtons, "Expired, run /sessions again");
   handlePageCallback(/^ws_page_(\d+)$/, "ws", pendingWorkspaceButtons, "Expired, run /new again");
+  handlePageCallback(/^proj_page_(\d+)$/, "proj", pendingProjectWorkspaceButtons, "Expired, run /projekts again");
   handlePageCallback(
     /^launch_page_(\d+)$/,
     "launch",
@@ -1589,6 +1645,67 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
       const label = isTopicContext(contextKey) ? "New thread created for this topic." : "New thread created.";
       const plainText = `${label}\n\n${renderSessionInfoPlain(info)}`;
       const html = `<b>${escapeHTML(label)}</b>\n\n${renderSessionInfoHTML(info)}`;
+
+      if (messageId) {
+        await safeEditMessage(bot, chatId, messageId, html, { fallbackText: plainText });
+      } else {
+        await safeReply(ctx, html, { fallbackText: plainText });
+      }
+    } catch (error) {
+      const errHtml = `<b>Failed:</b> ${escapeHTML(friendlyErrorText(error))}`;
+      const errPlain = `Failed: ${friendlyErrorText(error)}`;
+      if (messageId) {
+        await safeEditMessage(bot, chatId, messageId, errHtml, { fallbackText: errPlain });
+      } else {
+        await safeReply(ctx, errHtml, { fallbackText: errPlain });
+      }
+    } finally {
+      busyState.switching = false;
+    }
+  });
+
+  bot.callbackQuery(/^proj_(\d+)$/, async (ctx) => {
+    const chatId = ctx.chat?.id;
+    const messageId = ctx.callbackQuery.message?.message_id;
+    const index = Number.parseInt(ctx.match?.[1] ?? "", 10);
+
+    if (!chatId || Number.isNaN(index)) {
+      return;
+    }
+
+    const contextSession = await getContextSession(ctx, { deferThreadStart: true });
+    if (!contextSession) {
+      return;
+    }
+
+    const { contextKey, session } = contextSession;
+    const workspaces = pendingProjectWorkspacePicks.get(contextKey);
+    const workspace = workspaces?.[index];
+    if (!workspace) {
+      await ctx.answerCallbackQuery({ text: "Expired, run /projekts again" });
+      return;
+    }
+
+    if (isBusy(contextKey)) {
+      await ctx.answerCallbackQuery({ text: "Wait for the current prompt to finish" });
+      return;
+    }
+
+    await ctx.answerCallbackQuery({ text: "Switching project..." });
+    pendingProjectWorkspacePicks.delete(contextKey);
+    pendingProjectWorkspaceButtons.delete(contextKey);
+
+    const busyState = getBusyState(contextKey);
+    busyState.switching = true;
+    try {
+      const info = await session.newThread(workspace);
+      updateSessionMetadata(contextKey, session);
+      const label = isTopicContext(contextKey)
+        ? "Active project changed for this topic."
+        : "Active project changed for this chat.";
+      const projectLabel = getWorkspaceShortName(workspace);
+      const plainText = `${label}\nProject: ${projectLabel}\n\n${renderSessionInfoPlain(info)}`;
+      const html = `<b>${escapeHTML(label)}</b>\nProject: <code>${escapeHTML(projectLabel)}</code>\n\n${renderSessionInfoHTML(info)}`;
 
       if (messageId) {
         await safeEditMessage(bot, chatId, messageId, html, { fallbackText: plainText });
@@ -2136,6 +2253,7 @@ export async function registerCommands(bot: Bot<Context>): Promise<void> {
     { command: "start", description: "Welcome & status" },
     { command: "help", description: "Command reference" },
     { command: "new", description: "Start a new thread" },
+    { command: "projekts", description: "Pick project for this chat" },
     { command: "session", description: "Current thread details" },
     { command: "sessions", description: "Browse & switch threads" },
     { command: "retry", description: "Resend the last prompt" },
