@@ -13,7 +13,7 @@ try {
   bot = createBot(config, registry);
   await registerCommands(bot);
 
-  console.log("TeleCodex running");
+  console.log("AttysCodexBridge running");
   const authStatus = await checkAuthStatus(config.codexApiKey);
   console.log(`Auth: ${authStatus.authenticated ? "authenticated" : "not authenticated"} (${authStatus.method})`);
   if (!authStatus.authenticated) {
@@ -39,7 +39,7 @@ try {
   console.log("Session mode: per Telegram context");
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
-  console.error(`Failed to start TeleCodex: ${message}`);
+  console.error(`Failed to start AttysCodexBridge: ${message}`);
   registry?.disposeAll();
   process.exit(1);
 }
@@ -51,12 +51,12 @@ const shutdown = (signal: NodeJS.Signals) => {
   }
   shuttingDown = true;
 
-  console.log(`Received ${signal}, shutting down TeleCodex...`);
+  console.log(`Received ${signal}, shutting down AttysCodexBridge...`);
   if (bot) bot.stop();
 
   setTimeout(() => {
     registry?.disposeAll();
-    console.log("TeleCodex stopped.");
+    console.log("AttysCodexBridge stopped.");
     process.exit(0);
   }, 500);
 };

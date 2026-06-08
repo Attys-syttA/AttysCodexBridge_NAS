@@ -81,7 +81,7 @@ export function renderHelpMessage(): DualText {
  */
 export function renderWelcomeFirstTime(authWarning?: string): DualText {
   const htmlLines = [
-    "<b>👋 TeleCodex is ready.</b>",
+    "<b>👋 AttysCodexBridge is ready.</b>",
     "",
     "Send a message to start chatting with Codex.",
     "You can also send voice notes, photos, or documents.",
@@ -89,7 +89,7 @@ export function renderWelcomeFirstTime(authWarning?: string): DualText {
     "Type /help for all commands.",
   ];
   const plainLines = [
-    "👋 TeleCodex is ready.",
+    "👋 AttysCodexBridge is ready.",
     "",
     "Send a message to start chatting with Codex.",
     "You can also send voice notes, photos, or documents.",
@@ -114,7 +114,7 @@ export function renderWelcomeReturning(
   isTopicSession: boolean,
   authWarning?: string,
 ): DualText {
-  const label = isTopicSession ? "TeleCodex (topic session)" : "TeleCodex";
+  const label = isTopicSession ? "AttysCodexBridge (topic session)" : "AttysCodexBridge";
 
   const htmlLines = [`<b>👋 ${escapeHTML(label)}</b>`, "", sessionHtml];
   const plainLines = [`👋 ${label}`, "", sessionPlain];

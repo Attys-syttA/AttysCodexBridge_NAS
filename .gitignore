@@ -10,6 +10,8 @@ dist/
 # Runtime state
 .telecodex/
 telecodex.log
+telecodex-run.log
+telecodex-run.err.log
 
 # Runtime workspace (Docker mount)
 workspace/
@@ -25,6 +27,8 @@ agent-tools/
 .idea/
 *.swp
 *.swo
+.serena/
+tmp_*.txt
 
 # Test coverage
 coverage/

@@ -1,6 +1,8 @@
-# TeleCodex
+# AttysCodexBridge
 
-TeleCodex is a Telegram bridge for the OpenAI Codex CLI SDK. It keeps a Codex thread alive from your phone, streams agent responses and tool output in real time, and lets you hand the thread back to the CLI whenever you want.
+AttysCodexBridge is a Telegram bridge for the OpenAI Codex CLI SDK. It keeps a Codex thread alive from your phone, streams agent responses and tool output in real time, and lets you hand the thread back to the CLI whenever you want.
+
+This repository is a custom continuation built on the original core from `benedict2310/telecodex.git`.
 
 ## Features
 
@@ -25,7 +27,7 @@ TeleCodex is a Telegram bridge for the OpenAI Codex CLI SDK. It keeps a Codex th
 
 ## Prerequisites
 
-TeleCodex can also be used in a multi-repo setup: one bot process can serve several local project folders, while keeping its own session state outside those target repos.
+AttysCodexBridge can also be used in a multi-repo setup: one bot process can serve several local project folders, while keeping its own session state outside those target repos.
 
 - Node.js 22+
 - A Telegram bot token from [@BotFather](https://t.me/BotFather)
@@ -73,7 +75,7 @@ TeleCodex can also be used in a multi-repo setup: one bot process can serve seve
    |---|---|
    | `TELECODEX_WORKSPACE_ROOT` | Parent folder to scan for candidate project directories, e.g. `<CODEX_WORKS_ON_WORK_PC>` |
    | `TELECODEX_DEFAULT_WORKSPACE` | Default project folder for fresh contexts before you switch or start a new thread |
-   | `TELECODEX_STATE_DIR` | Folder used for TeleCodex state such as `contexts.json`, inbox, and outbox |
+   | `TELECODEX_STATE_DIR` | Folder used for AttysCodexBridge state such as `contexts.json`, inbox, and outbox |
 
 4. Start the bot:
    ```bash
@@ -105,9 +107,9 @@ TeleCodex can also be used in a multi-repo setup: one bot process can serve seve
 
 ### Voice, image & file input
 
-- **Voice / audio** — send any voice message or audio file; TeleCodex transcribes it and sends the result to Codex
+- **Voice / audio** — send any voice message or audio file; AttysCodexBridge transcribes it and sends the result to Codex
 - **Photos** — send a photo with an optional caption; the image is forwarded to Codex as visual input
-- **Documents** — send a file (with optional caption); TeleCodex stages it in the workspace, runs Codex, and delivers any generated files back as Telegram documents
+- **Documents** — send a file (with optional caption); AttysCodexBridge stages it in the workspace, runs Codex, and delivers any generated files back as Telegram documents
 
 ### Tool verbosity
 
@@ -122,7 +124,7 @@ Per-turn token usage is hidden by default. Set `SHOW_TURN_TOKEN_USAGE=true` if y
 
 ### Launch profiles
 
-- TeleCodex always provides a built-in `default` profile synthesized from `CODEX_SANDBOX_MODE` and `CODEX_APPROVAL_POLICY`
+- AttysCodexBridge always provides a built-in `default` profile synthesized from `CODEX_SANDBOX_MODE` and `CODEX_APPROVAL_POLICY`
 - Built-in Telegram-visible presets are:
   - `Default`
   - `Read Only`
@@ -176,10 +178,10 @@ If you want one Telegram bot to work across several local repos on the same mach
 
 1. Set `TELECODEX_WORKSPACE_ROOT` to a parent folder that contains your projects, for example `<CODEX_WORKS_ON_WORK_PC>`.
 2. Optionally set `TELECODEX_DEFAULT_WORKSPACE` to the repo you use most often.
-3. Set `TELECODEX_STATE_DIR` to a folder owned by TeleCodex itself, for example `<CODEX_WORKS_ON_WORK_PC>\telecodex\.telecodex`.
+3. Set `TELECODEX_STATE_DIR` to a folder owned by AttysCodexBridge itself, for example `<CODEX_WORKS_ON_WORK_PC>\telecodex\.telecodex`.
 4. Use `/projekts` in Telegram to pick a different repo when needed.
 
-TeleCodex will then:
+AttysCodexBridge will then:
 - keep Telegram session state outside the target repos
 - discover likely project folders under the shared root
 - continue to list old workspaces seen in existing Codex threads from `~/.codex`
@@ -187,7 +189,7 @@ TeleCodex will then:
 ## Handoff: Telegram → CLI
 
 1. Run `/handback` in Telegram
-2. TeleCodex replies with:
+2. AttysCodexBridge replies with:
    ```bash
    cd '/path/to/project' && codex resume 'thread-abc123'
    ```
@@ -219,7 +221,7 @@ Telegram ←→ Grammy bot (auto-retry, HTML formatting, inline keyboards)
 ## Project Layout
 
 ```
-TeleCodex/
+AttysCodexBridge/
 ├── src/
 │   ├── index.ts           — startup, signal handling, polling loop
 │   ├── bot.ts             — Telegram bot, all commands and handlers
@@ -266,7 +268,7 @@ npm test         # run vitest
 
 ## Release Automation
 
-TeleCodex does not yet use the TelePi npm release pipeline, but the exact Trusted Publishing process has been documented so it can be adopted here.
+AttysCodexBridge does not yet use the TelePi npm release pipeline, but the exact Trusted Publishing process has been documented so it can be adopted here.
 
 See:
 - `docs/npm-trusted-publishing.md`

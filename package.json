@@ -1,12 +1,12 @@
 {
-  "name": "telecodex",
+  "name": "attys-codex-bridge",
   "version": "0.1.0",
-  "description": "Telegram bridge for the OpenAI Codex CLI SDK",
+  "description": "AttysCodexBridge - Telegram bridge for the OpenAI Codex CLI SDK",
   "license": "MIT",
-  "author": "Benedict Evert",
+  "author": "Attys-syttA",
   "repository": {
     "type": "git",
-    "url": "https://github.com/benedict2310/telecodex"
+    "url": "https://github.com/Attys-syttA/AttysCodexBridge"
   },
   "keywords": [
     "telegram",

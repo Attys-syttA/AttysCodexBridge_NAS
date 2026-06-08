@@ -38,7 +38,7 @@ describe("bot-ui", () => {
   describe("renderWelcomeFirstTime", () => {
     it("shows welcome without auth warning", () => {
       const { html, plain } = renderWelcomeFirstTime();
-      expect(html).toContain("TeleCodex is ready");
+      expect(html).toContain("AttysCodexBridge is ready");
       expect(plain).toContain("/help");
       expect(html).not.toContain("⚠️");
     });
@@ -57,7 +57,7 @@ describe("bot-ui", () => {
         "Thread: abc123",
         false,
       );
-      expect(html).toContain("TeleCodex");
+      expect(html).toContain("AttysCodexBridge");
       expect(html).toContain("abc123");
       expect(plain).toContain("abc123");
     });

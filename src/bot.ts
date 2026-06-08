@@ -1277,7 +1277,7 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
         copiedToClipboard ? "" : undefined,
         copiedToClipboard ? "📋 Command copied to clipboard!" : undefined,
         "",
-        "Send any message here to start a new TeleCodex thread.",
+        "Send any message here to start a new AttysCodexBridge thread.",
       ]
         .filter((line): line is string => line !== undefined)
         .join("\n");
@@ -1290,7 +1290,7 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
         copiedToClipboard ? "" : undefined,
         copiedToClipboard ? "📋 <i>Command copied to clipboard!</i>" : undefined,
         "",
-        "Send any message here to start a new TeleCodex thread.",
+        "Send any message here to start a new AttysCodexBridge thread.",
       ]
         .filter((line): line is string => line !== undefined)
         .join("\n");
