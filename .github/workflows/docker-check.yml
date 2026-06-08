@@ -1,0 +1,30 @@
+name: Docker Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  docker-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Build Docker image
+        run: docker build --pull --tag attys-codex-bridge:ci .
+
+      - name: Validate Docker Compose file
+        shell: bash
+        run: |
+          cat > .env <<'EOF'
+          TELEGRAM_BOT_TOKEN=TEST_ONLY_bot_token
+          TELEGRAM_ALLOWED_USER_IDS=123456789
+          EOF
+          docker compose config --quiet
