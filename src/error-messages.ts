@@ -34,6 +34,10 @@ const ERROR_PATTERNS: Array<{ pattern: RegExp; message: string }> = [
     message: "Request timed out. Try a shorter prompt or use /retry.",
   },
   {
+    pattern: /stream disconnected before completion|websocket closed by server before response\.completed/i,
+    message: "A Codex stream kapcsolata megszakadt. Használd a /retry parancsot, vagy próbáld újra rövidebb üzenettel.",
+  },
+  {
     pattern: /500|internal.?server.?error/i,
     message: "The API returned a server error. Try again in a moment.",
   },

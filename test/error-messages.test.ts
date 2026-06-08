@@ -50,6 +50,16 @@ describe("error-messages", () => {
       expect(result.userMessage).toContain("timed out");
     });
 
+    it("translates Codex stream disconnects", () => {
+      const result = translateError(
+        new Error(
+          "Reconnecting... 2/5 (stream disconnected before completion: websocket closed by server before response.completed)",
+        ),
+      );
+      expect(result.userMessage).toContain("stream kapcsolata megszakadt");
+      expect(result.userMessage).toContain("/retry");
+    });
+
     it("translates abort", () => {
       const result = translateError(new Error("The operation was aborted"));
       expect(result.userMessage).toBe("⏹ Aborted");

@@ -73,6 +73,13 @@ export interface CreateOptions {
 
 export type CodexPromptInput = string | { text?: string; imagePaths?: string[]; stagedFileInstructions?: string };
 
+export interface SwitchSessionOptions {
+  workspaceOverride?: string;
+  modelOverride?: string;
+  preferWorkspaceOverride?: boolean;
+  ignoreStoredModel?: boolean;
+}
+
 export class CodexSessionService {
   private codex: Codex | null = null;
   private thread: Thread | null = null;
@@ -252,6 +259,9 @@ export class CodexSessionService {
             } else if (item.type === "web_search") {
               callbacks.onToolEnd(item.id, false);
             } else if (item.type === "error") {
+              if (isTerminalCodexStreamError(item.message)) {
+                throw new Error(item.message);
+              }
               callbacks.onToolStart("⚠️ error", item.id);
               callbacks.onToolUpdate(item.id, item.message);
               callbacks.onToolEnd(item.id, true);
@@ -322,12 +332,17 @@ export class CodexSessionService {
     return this.getInfo();
   }
 
-  async switchSession(threadId: string, workspaceOverride?: string): Promise<CodexSessionInfo> {
+  async switchSession(threadId: string, options?: string | SwitchSessionOptions): Promise<CodexSessionInfo> {
     this.ensureIdle("switch session");
 
+    const switchOptions = typeof options === "string" ? { workspaceOverride: options } : options;
     const record = getThread(threadId);
-    const workspace = normalizeWorkspacePath(this.config, record?.cwd ?? workspaceOverride ?? this.currentWorkspace);
-    const model = record?.model || undefined;
+    const workspaceSource = switchOptions?.preferWorkspaceOverride
+      ? switchOptions.workspaceOverride ?? record?.cwd ?? this.currentWorkspace
+      : record?.cwd ?? switchOptions?.workspaceOverride ?? this.currentWorkspace;
+    const workspace = normalizeWorkspacePath(this.config, workspaceSource);
+    const model = switchOptions?.modelOverride
+      ?? (switchOptions?.ignoreStoredModel ? this.currentModel ?? this.config.codexModel : record?.model || undefined);
 
     this.thread = this.getCodex().resumeThread(threadId, this.buildThreadOptions(workspace, model));
     this.activeThreadLaunchProfile = this.currentLaunchProfile;
@@ -505,6 +520,10 @@ function buildCodexEnv(apiKey?: string): Record<string, string> {
   }
 
   return env;
+}
+
+function isTerminalCodexStreamError(message: string): boolean {
+  return /stream disconnected before completion|websocket closed by server before response\.completed/i.test(message);
 }
 
 function computeTextDelta(previousText: string, nextText: string): string {

@@ -111,7 +111,7 @@ For the practical handoff workflow between Telegram and Codex CLI / VS Code, see
 From VS Code / Codex Agent side, send a concrete thread handoff to Telegram with:
 
 ```powershell
-.\scripts\send-vsc-handoff.ps1 -ThreadId <thread-id> -Workspace <project-path>
+.\scripts\send-vsc-handoff.ps1 -ThreadId <thread-id> -Workspace <project-path> -Model gpt-5.5
 ```
 
 Use `-DryRun` to verify the generated handoff record without writing `.telecodex` or calling Telegram.
@@ -213,10 +213,10 @@ On macOS the command is also copied to the clipboard automatically.
 Run the sender script from the workspace you want to continue, or pass `-Workspace` explicitly:
 
 ```powershell
-.\scripts\send-vsc-handoff.ps1 -ThreadId <thread-id>
+.\scripts\send-vsc-handoff.ps1 -ThreadId <thread-id> -Model gpt-5.5
 ```
 
-The script writes `.telecodex/handoff-inbox.json` and sends a direct Telegram Bot API message. By default the handoff is `attached`, so the first Telegram reply continues that exact Codex thread and workspace. Add `-Pending` if you want Telegram to ask for `/attach <thread-id>` or `/new` confirmation first.
+The script writes `.telecodex/handoff-inbox.json` and sends a direct Telegram Bot API message. By default the handoff is `attached`, so the first Telegram reply continues that exact Codex thread, workspace, and optional model. Add `-Pending` if you want Telegram to ask for `/attach <thread-id>` or `/new` confirmation first.
 
 ## Architecture
 

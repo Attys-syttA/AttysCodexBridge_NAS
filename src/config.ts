@@ -43,10 +43,13 @@ export interface TeleCodexConfig {
   telegramTypingIntervalMs: number;
   codexNoOutputStatusMs: number;
   codexTurnHardTimeoutMs: number;
+  vscHandoffDirectResumeMaxSessionBytes: number;
 }
 
 export function loadConfig(): TeleCodexConfig {
-  loadEnvFile(path.resolve(process.cwd(), ".env"));
+  loadEnvFile(path.resolve(process.cwd(), ".env"), {
+    overrideKeys: new Set(["TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USER_IDS"]),
+  });
 
   const telegramBotToken = requireEnv("TELEGRAM_BOT_TOKEN");
   const telegramAllowedUserIds = parseAllowedUserIds(requireEnv("TELEGRAM_ALLOWED_USER_IDS"));
@@ -107,6 +110,11 @@ export function loadConfig(): TeleCodexConfig {
     60 * 60_000,
     "CODEX_TURN_HARD_TIMEOUT_MS",
   );
+  const vscHandoffDirectResumeMaxSessionBytes = parsePositiveIntegerEnv(
+    optionalString(process.env.TELECODEX_VSC_HANDOFF_DIRECT_RESUME_MAX_SESSION_BYTES),
+    20 * 1024 * 1024,
+    "TELECODEX_VSC_HANDOFF_DIRECT_RESUME_MAX_SESSION_BYTES",
+  );
 
   return {
     telegramBotToken,
@@ -135,6 +143,7 @@ export function loadConfig(): TeleCodexConfig {
     telegramTypingIntervalMs,
     codexNoOutputStatusMs,
     codexTurnHardTimeoutMs,
+    vscHandoffDirectResumeMaxSessionBytes,
   };
 }
 
@@ -182,7 +191,7 @@ function isRunningInDocker(): boolean {
   return existsSync("/.dockerenv") || process.env.container === "docker";
 }
 
-function loadEnvFile(envPath: string): void {
+function loadEnvFile(envPath: string, options: { overrideKeys?: Set<string> } = {}): void {
   if (!existsSync(envPath)) {
     return;
   }
@@ -203,7 +212,7 @@ function loadEnvFile(envPath: string): void {
     const key = normalized.slice(0, separatorIndex).trim();
     let value = normalized.slice(separatorIndex + 1).trim();
 
-    if (!key || process.env[key] !== undefined) {
+    if (!key || (process.env[key] !== undefined && !options.overrideKeys?.has(key))) {
       continue;
     }
 

@@ -166,12 +166,18 @@ export function listModels(): CodexModelRecord[] {
 
   try {
     const payload = JSON.parse(readFileSync(modelsPath, "utf8")) as {
-      models?: Array<{ slug?: unknown; display_name?: unknown; visibility?: unknown }>;
+      models?: Array<{
+        slug?: unknown;
+        display_name?: unknown;
+        visibility?: unknown;
+        supported_in_api?: unknown;
+      }>;
     };
 
     const models = (payload.models ?? [])
       .filter((model) => model && typeof model === "object")
-      .filter((model) => model.visibility !== "hidden")
+      .filter((model) => model.visibility !== "hidden" && model.visibility !== "hide")
+      .filter((model) => model.supported_in_api !== false)
       .map((model) => ({
         slug: typeof model.slug === "string" ? model.slug : "",
         displayName: typeof model.display_name === "string" ? model.display_name : "",

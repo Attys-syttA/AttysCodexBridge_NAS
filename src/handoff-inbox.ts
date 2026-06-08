@@ -97,6 +97,7 @@ export function isContextHandoff(value: unknown): value is ContextHandoff {
       candidate.status === "pending_vsc_pickup") &&
     typeof candidate.workspace === "string" &&
     (typeof candidate.threadId === "string" || candidate.threadId === null) &&
+    (candidate.model === undefined || typeof candidate.model === "string") &&
     typeof candidate.createdAt === "string"
   );
 }

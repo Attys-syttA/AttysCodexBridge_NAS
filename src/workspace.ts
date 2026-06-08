@@ -18,7 +18,7 @@ export function normalizeWorkspacePath(config: TeleCodexConfig, workspace: strin
     return resolved;
   }
 
-  const remapped = isWindowsDrivePath(raw) ? remapIntoWorkspaceRoot(config.workspaceRoot, resolved) : null;
+  const remapped = isWindowsDrivePath(raw) ? remapIntoWorkspaceRoot(config.workspaceRoot, path.win32.normalize(raw)) : null;
   return remapped ?? resolved;
 }
 
@@ -51,7 +51,7 @@ function remapIntoWorkspaceRoot(workspaceRoot: string | undefined, workspace: st
     return null;
   }
 
-  const leaf = path.basename(workspace);
+  const leaf = isWindowsDrivePath(workspace) ? path.win32.basename(workspace) : path.basename(workspace);
   const candidates = [
     path.join(workspaceRoot, leaf),
     path.join(workspaceRoot, leaf.replaceAll("_", "-")),

@@ -1,8 +1,13 @@
 import type { Context } from "grammy";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
   buildReplyParameters,
+  getDirectResumeWarning,
+  renderDirectResumeWarningPlain,
   renderPendingHandoffPlain,
   resolveReplyToMessageId,
   shouldBlockPromptForHandoff,
@@ -63,5 +68,40 @@ describe("Telegram handoff prompt guard", () => {
 
     expect(text).toContain("/attach thread-a");
     expect(text).toContain("/new");
+  });
+
+  it("warns before automatically resuming an oversized VSC handoff thread", () => {
+    const originalUserProfile = process.env.USERPROFILE;
+    const originalHome = process.env.HOME;
+    const home = mkdtempSync(path.join(os.tmpdir(), "telecodex-home-"));
+    try {
+      delete process.env.HOME;
+      process.env.USERPROFILE = home;
+      const sessionsDir = path.join(home, ".codex", "sessions", "2026", "06", "08");
+      mkdirSync(sessionsDir, { recursive: true });
+      writeFileSync(path.join(sessionsDir, "rollout-thread-a.jsonl"), "12345678901", "utf8");
+
+      const warning = getDirectResumeWarning(
+        { vscHandoffDirectResumeMaxSessionBytes: 10 },
+        { ...baseHandoff, status: "attached" },
+      );
+
+      expect(warning).toMatchObject({ sizeBytes: 11, maxBytes: 10 });
+      expect(renderDirectResumeWarningPlain({ ...baseHandoff, status: "pending_inbound" }, warning!)).toContain(
+        "/attach thread-a",
+      );
+    } finally {
+      if (originalUserProfile === undefined) {
+        delete process.env.USERPROFILE;
+      } else {
+        process.env.USERPROFILE = originalUserProfile;
+      }
+      if (originalHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = originalHome;
+      }
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });

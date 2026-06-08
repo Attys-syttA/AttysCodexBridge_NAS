@@ -29,6 +29,7 @@ import {
   type CodexSessionService,
 } from "./codex-session.js";
 import { checkAuthStatus, clearAuthCache, startLogin, startLogout } from "./codex-auth.js";
+import { findCodexSessionFile } from "./codex-session-file.js";
 import {
   findLaunchProfile,
   formatLaunchProfileBehavior,
@@ -58,6 +59,11 @@ const LAUNCH_PROFILES_COMMAND = "/launch_profiles";
 type TelegramChatId = number | string;
 type TelegramParseMode = "HTML";
 type KeyboardItem = { label: string; callbackData: string };
+export type DirectResumeWarning = {
+  sessionPath: string;
+  sizeBytes: number;
+  maxBytes: number;
+};
 
 type ToolState = {
   toolName: string;
@@ -216,8 +222,27 @@ export function createBot(
           return true;
         }
 
+        const resumeWarning = getDirectResumeWarning(config, inboxHandoff);
+        if (resumeWarning) {
+          const pendingHandoff: ContextHandoff = {
+            ...inboxHandoff,
+            status: "pending_inbound",
+          };
+          registry.setHandoff(contextKey, pendingHandoff);
+          await clearHandoffInboxRecord(config, contextKey);
+          await safeReply(ctx, renderDirectResumeWarningHTML(pendingHandoff, resumeWarning), {
+            fallbackText: renderDirectResumeWarningPlain(pendingHandoff, resumeWarning),
+          });
+          return true;
+        }
+
         try {
-          const info = await session.switchSession(inboxHandoff.threadId, inboxHandoff.workspace);
+          const info = await session.switchSession(inboxHandoff.threadId, {
+            workspaceOverride: inboxHandoff.workspace,
+            modelOverride: inboxHandoff.model,
+            preferWorkspaceOverride: true,
+            ignoreStoredModel: true,
+          });
           updateSessionMetadata(contextKey, session);
           setAttachedHandoff(contextKey, info, inboxHandoff.sourceHost);
           await clearHandoffInboxRecord(config, contextKey);
@@ -1599,7 +1624,17 @@ export function createBot(
     const busyState = getBusyState(contextKey);
     busyState.switching = true;
     try {
-      const info = await session.switchSession(threadId, matchesHandoff ? handoff.workspace : undefined);
+      const info = await session.switchSession(
+        threadId,
+        matchesHandoff
+          ? {
+              workspaceOverride: handoff.workspace,
+              modelOverride: handoff.model,
+              preferWorkspaceOverride: true,
+              ignoreStoredModel: true,
+            }
+          : undefined,
+      );
       updateSessionMetadata(contextKey, session);
       setAttachedHandoff(contextKey, info);
       await clearHandoffInboxRecord(config, contextKey);
@@ -2615,6 +2650,7 @@ export function renderHandoffPlain(handoff: ContextHandoff): string {
     `Átadás állapot: ${formatHandoffStatus(handoff.status)}`,
     `Átadás workspace: ${handoff.workspace}`,
     handoff.threadId ? `Átadás thread ID: ${handoff.threadId}` : undefined,
+    handoff.model ? `Átadás modell: ${handoff.model}` : undefined,
     handoff.sourceHost ? `Forrás host: ${handoff.sourceHost}` : undefined,
     handoff.targetHost ? `Cél host: ${handoff.targetHost}` : undefined,
   ]
@@ -2627,6 +2663,7 @@ export function renderHandoffHTML(handoff: ContextHandoff): string {
     `<b>Átadás állapot:</b> <code>${escapeHTML(formatHandoffStatus(handoff.status))}</code>`,
     `<b>Átadás workspace:</b> <code>${escapeHTML(handoff.workspace)}</code>`,
     handoff.threadId ? `<b>Átadás thread ID:</b> <code>${escapeHTML(handoff.threadId)}</code>` : undefined,
+    handoff.model ? `<b>Átadás modell:</b> <code>${escapeHTML(handoff.model)}</code>` : undefined,
     handoff.sourceHost ? `<b>Forrás host:</b> <code>${escapeHTML(handoff.sourceHost)}</code>` : undefined,
     handoff.targetHost ? `<b>Cél host:</b> <code>${escapeHTML(handoff.targetHost)}</code>` : undefined,
   ]
@@ -2655,8 +2692,59 @@ export function renderPendingHandoffHTML(handoff: ContextHandoff): string {
   ].join("\n");
 }
 
+export function renderDirectResumeWarningPlain(
+  handoff: ContextHandoff,
+  warning: DirectResumeWarning,
+): string {
+  return [
+    "Az átadott VSC/Codex szál túl nagy az automatikus Telegram-folytatáshoz.",
+    renderHandoffPlain(handoff),
+    `Session fájl méret: ${formatBytes(warning.sizeBytes)} (küszöb: ${formatBytes(warning.maxBytes)})`,
+    "",
+    "A bot ezért nem indított vakon direkt resume-ot.",
+    handoff.threadId ? `Ha mégis direkt folytatod: /attach ${handoff.threadId}` : "Ha mégis direkt folytatod: /attach <thread-id>",
+    "Biztonságosabb új szál: /new",
+  ].join("\n");
+}
+
+export function renderDirectResumeWarningHTML(
+  handoff: ContextHandoff,
+  warning: DirectResumeWarning,
+): string {
+  const attachCommand = handoff.threadId ? `/attach ${handoff.threadId}` : "/attach <thread-id>";
+  return [
+    "<b>Az átadott VSC/Codex szál túl nagy az automatikus Telegram-folytatáshoz.</b>",
+    renderHandoffHTML(handoff),
+    `<b>Session fájl méret:</b> <code>${escapeHTML(formatBytes(warning.sizeBytes))}</code> <i>(küszöb: ${escapeHTML(formatBytes(warning.maxBytes))})</i>`,
+    "",
+    "A bot ezért nem indított vakon direkt resume-ot.",
+    `Ha mégis direkt folytatod: <code>${escapeHTML(attachCommand)}</code>`,
+    "Biztonságosabb új szál: <code>/new</code>",
+  ].join("\n");
+}
+
 export function shouldBlockPromptForHandoff(handoff?: ContextHandoff): boolean {
   return Boolean(handoff && handoff.status !== "none" && handoff.status !== "attached");
+}
+
+export function getDirectResumeWarning(
+  config: Pick<TeleCodexConfig, "vscHandoffDirectResumeMaxSessionBytes">,
+  handoff: ContextHandoff,
+): DirectResumeWarning | undefined {
+  if (handoff.status !== "attached" || !handoff.threadId || handoff.sourceHost !== "vsc") {
+    return undefined;
+  }
+
+  const sessionFile = findCodexSessionFile(handoff.threadId);
+  if (!sessionFile || sessionFile.sizeBytes <= config.vscHandoffDirectResumeMaxSessionBytes) {
+    return undefined;
+  }
+
+  return {
+    sessionPath: sessionFile.path,
+    sizeBytes: sessionFile.sizeBytes,
+    maxBytes: config.vscHandoffDirectResumeMaxSessionBytes,
+  };
 }
 
 function formatHandoffStatus(status: ContextHandoff["status"]): string {
@@ -2671,6 +2759,16 @@ function formatHandoffStatus(status: ContextHandoff["status"]): string {
     default:
       return "nincs";
   }
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function renderLaunchSummaryPlain(info: CodexSessionInfo): string {

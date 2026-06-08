@@ -5,6 +5,7 @@ param(
   [string]$Workspace = (Get-Location).Path,
   [string]$ChatId,
   [int]$MessageThreadId,
+  [string]$Model,
   [string]$SourceHost = "vsc",
   [string]$TargetHost,
   [int]$TtlMinutes = 60,
@@ -52,8 +53,13 @@ function Read-DotEnv {
 function Get-ConfigValue {
   param(
     [hashtable]$EnvFile,
-    [string]$Name
+    [string]$Name,
+    [switch]$PreferEnvFile
   )
+
+  if ($PreferEnvFile -and $EnvFile[$Name]) {
+    return $EnvFile[$Name]
+  }
 
   $environmentValue = [Environment]::GetEnvironmentVariable($Name)
   if ($environmentValue) {
@@ -88,8 +94,8 @@ $repoRoot = [System.IO.Path]::GetFullPath((Join-Path -Path $PSScriptRoot -ChildP
 $envPath = Join-Path -Path $repoRoot -ChildPath ".env"
 $envFile = Read-DotEnv -Path $envPath
 
-$telegramBotToken = Get-ConfigValue -EnvFile $envFile -Name "TELEGRAM_BOT_TOKEN"
-$allowedUserIds = Get-ConfigValue -EnvFile $envFile -Name "TELEGRAM_ALLOWED_USER_IDS"
+$telegramBotToken = Get-ConfigValue -EnvFile $envFile -Name "TELEGRAM_BOT_TOKEN" -PreferEnvFile
+$allowedUserIds = Get-ConfigValue -EnvFile $envFile -Name "TELEGRAM_ALLOWED_USER_IDS" -PreferEnvFile
 $stateDirRaw = Get-ConfigValue -EnvFile $envFile -Name "TELECODEX_STATE_DIR"
 $hostLabel = Get-ConfigValue -EnvFile $envFile -Name "TELECODEX_HOST_LABEL"
 
@@ -119,6 +125,11 @@ if (-not $stateDir) {
 }
 
 $resolvedWorkspace = [System.IO.Path]::GetFullPath($Workspace)
+$displayWorkspace = $resolvedWorkspace
+if ($resolvedWorkspace.StartsWith($repoRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+  $relativeWorkspace = [System.IO.Path]::GetRelativePath($repoRoot, $resolvedWorkspace)
+  $displayWorkspace = if ($relativeWorkspace -eq ".") { "AttysCodexBridge" } else { "AttysCodexBridge\$relativeWorkspace" }
+}
 $createdAt = (Get-Date).ToUniversalTime()
 $expiresAt = $createdAt.AddMinutes($TtlMinutes)
 $status = if ($Pending) { "pending_inbound" } else { "attached" }
@@ -132,6 +143,9 @@ $handoff = [ordered]@{
   targetHost = $TargetHost
   createdAt = $createdAt.ToString("o")
   expiresAt = $expiresAt.ToString("o")
+}
+if ($Model) {
+  $handoff.model = $Model
 }
 
 $inboxPath = Join-Path -Path $stateDir -ChildPath "handoff-inbox.json"
@@ -152,8 +166,9 @@ $message = @"
 VSC/Codex atadas keszen.
 
 Host: $TargetHost
-Workspace: $resolvedWorkspace
+Workspace: $displayWorkspace
 Thread ID: $ThreadId
+$(if ($Model) { "Model: $Model" } else { "Model: (nincs atadva)" })
 Allapot: $status
 
 Ha valaszolsz, a Telegram chat ezt a Codex szalat folytatja.

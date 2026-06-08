@@ -337,18 +337,22 @@ describe("codex-state", () => {
     ]);
   });
 
-  it("listModels parses models_cache.json and filters hidden models", async () => {
+  it("listModels parses models_cache.json and filters unavailable models", async () => {
     const state = await loadCodexState({
       modelsJson: JSON.stringify({
         models: [
+          { slug: "gpt-5.5", display_name: "GPT-5.5", visibility: "list", supported_in_api: true },
           { slug: "gpt-5.4", display_name: "GPT-5.4" },
           { slug: "secret", display_name: "Secret", visibility: "hidden" },
+          { slug: "internal", display_name: "Internal", visibility: "hide" },
+          { slug: "ui-only", display_name: "UI Only", visibility: "list", supported_in_api: false },
           { slug: "o3", display_name: "o3", visibility: "public" },
         ],
       }),
     });
 
     expect(state.listModels()).toEqual([
+      { slug: "gpt-5.5", displayName: "GPT-5.5" },
       { slug: "gpt-5.4", displayName: "GPT-5.4" },
       { slug: "o3", displayName: "o3" },
     ]);

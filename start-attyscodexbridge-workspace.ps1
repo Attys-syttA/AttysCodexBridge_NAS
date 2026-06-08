@@ -23,6 +23,19 @@ function Write-JsonLine {
   ($Value | ConvertTo-Json -Compress -Depth 8) | Add-Content -LiteralPath $Path -Encoding utf8
 }
 
+function Add-PathEntry {
+  param([Parameter(Mandatory = $true)][string]$Path)
+  if (-not (Test-Path -LiteralPath $Path)) {
+    return
+  }
+
+  $separator = [System.IO.Path]::PathSeparator
+  $entries = @($env:Path -split [regex]::Escape([string]$separator) | Where-Object { $_ })
+  if ($entries -notcontains $Path) {
+    $env:Path = ($Path, $env:Path) -join $separator
+  }
+}
+
 Ensure-Directory -Path $stateDir
 Ensure-Directory -Path $logDir
 
@@ -51,6 +64,11 @@ Get-Content -LiteralPath $envFile | ForEach-Object {
     $key, $value = $_.Split('=', 2)
     Set-Item -Path ("Env:" + $key) -Value $value
   }
+}
+
+Add-PathEntry -Path (Join-Path $repoRoot 'node_modules\.bin')
+if ($env:APPDATA) {
+  Add-PathEntry -Path (Join-Path $env:APPDATA 'npm')
 }
 
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'

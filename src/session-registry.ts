@@ -24,6 +24,7 @@ export interface ContextHandoff {
   status: HandoffStatus;
   workspace: string;
   threadId: string | null;
+  model?: string;
   sourceHost?: string;
   targetHost?: string;
   createdAt: string;
@@ -109,7 +110,7 @@ export class SessionRegistry {
       contextKey,
       threadId: existing?.threadId ?? handoff.threadId,
       workspace: existing?.workspace ?? handoff.workspace,
-      model: existing?.model,
+      model: handoff.model ?? existing?.model,
       reasoningEffort: existing?.reasoningEffort,
       launchProfileId: existing?.launchProfileId,
       handoff,

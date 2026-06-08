@@ -416,6 +416,33 @@ describe("CodexSessionService", () => {
     expect(callbacks.onToolEnd).toHaveBeenCalledWith("error-1", true);
   });
 
+  it("treats disconnected Codex stream error items as turn failures", async () => {
+    const service = await CodexSessionService.create(createConfig());
+    const thread = mockState.createdThreads[0];
+    const callbacks = createCallbacks();
+    const message =
+      "Reconnecting... 2/5 (stream disconnected before completion: websocket closed by server before response.completed)";
+
+    thread.runStreamed.mockResolvedValueOnce({
+      events: streamEvents([
+        {
+          type: "item.completed",
+          item: {
+            id: "error-1",
+            type: "error",
+            message,
+          },
+        },
+      ]),
+    });
+
+    await expect(service.prompt("continue", callbacks)).rejects.toThrow(message);
+
+    expect(callbacks.onToolStart).not.toHaveBeenCalled();
+    expect(callbacks.onToolUpdate).not.toHaveBeenCalled();
+    expect(callbacks.onToolEnd).not.toHaveBeenCalled();
+  });
+
   it("emits todo list updates for started, updated, and completed items", async () => {
     const service = await CodexSessionService.create(createConfig());
     const thread = mockState.createdThreads[0];
@@ -777,6 +804,69 @@ describe("CodexSessionService", () => {
       approvalPolicy: "never",
       unsafeLaunch: false,
     });
+  });
+
+  it("switchSession can prefer explicit handoff workspace and ignore stored model", async () => {
+    mockCodexState.getThread.mockReturnValue({
+      id: "thread-abc",
+      title: "Saved thread",
+      cwd: "/workspace/stale-db",
+      model: "gpt-unavailable",
+      createdAt: new Date("2025-01-01T00:00:00.000Z"),
+      updatedAt: new Date("2025-01-02T00:00:00.000Z"),
+      firstUserMessage: "hello",
+    });
+
+    const service = await CodexSessionService.create(createConfig());
+    const codexInstance = mockState.codexInstances[0];
+
+    const info = await service.switchSession("thread-abc", {
+      workspaceOverride: "/workspace/from-vsc",
+      preferWorkspaceOverride: true,
+      ignoreStoredModel: true,
+    });
+
+    expect(codexInstance.resumeThread).toHaveBeenLastCalledWith("thread-abc", {
+      model: "o3",
+      sandboxMode: "workspace-write",
+      workingDirectory: "/workspace/from-vsc",
+      approvalPolicy: "never",
+      skipGitRepoCheck: true,
+    });
+    expect(info.workspace).toBe("/workspace/from-vsc");
+    expect(info.model).toBe("o3");
+  });
+
+  it("switchSession can use an explicit handoff model", async () => {
+    mockCodexState.getThread.mockReturnValue({
+      id: "thread-abc",
+      title: "Saved thread",
+      cwd: "/workspace/stale-db",
+      model: "gpt-5.4",
+      createdAt: new Date("2025-01-01T00:00:00.000Z"),
+      updatedAt: new Date("2025-01-02T00:00:00.000Z"),
+      firstUserMessage: "hello",
+    });
+
+    const service = await CodexSessionService.create(createConfig());
+    const codexInstance = mockState.codexInstances[0];
+
+    const info = await service.switchSession("thread-abc", {
+      workspaceOverride: "/workspace/from-vsc",
+      modelOverride: "gpt-5.5",
+      preferWorkspaceOverride: true,
+      ignoreStoredModel: true,
+    });
+
+    expect(codexInstance.resumeThread).toHaveBeenLastCalledWith("thread-abc", {
+      model: "gpt-5.5",
+      sandboxMode: "workspace-write",
+      workingDirectory: "/workspace/from-vsc",
+      approvalPolicy: "never",
+      skipGitRepoCheck: true,
+    });
+    expect(info.workspace).toBe("/workspace/from-vsc");
+    expect(info.model).toBe("gpt-5.5");
   });
 
   it("switchSession throws when a turn is in progress", async () => {

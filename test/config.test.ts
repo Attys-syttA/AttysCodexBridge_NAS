@@ -36,6 +36,7 @@ describe("loadConfig", () => {
     delete process.env.TELEGRAM_TYPING_INTERVAL_MS;
     delete process.env.CODEX_NO_OUTPUT_STATUS_MS;
     delete process.env.CODEX_TURN_HARD_TIMEOUT_MS;
+    delete process.env.TELECODEX_VSC_HANDOFF_DIRECT_RESUME_MAX_SESSION_BYTES;
     delete process.env.container;
   });
 
@@ -120,6 +121,7 @@ describe("loadConfig", () => {
       telegramTypingIntervalMs: 30_000,
       codexNoOutputStatusMs: 5 * 60_000,
       codexTurnHardTimeoutMs: 60 * 60_000,
+      vscHandoffDirectResumeMaxSessionBytes: 20 * 1024 * 1024,
     });
   });
 
@@ -192,7 +194,7 @@ describe("loadConfig", () => {
     expect(() => loadConfig()).toThrow("TELEGRAM_ALLOWED_USER_IDS must contain at least one user id");
   });
 
-  it("loads values from .env without overwriting existing environment variables", () => {
+  it("loads values from .env and protects project-local Telegram bot identity", () => {
     writeFileSync(
       path.join(tempDir, ".env"),
       [
@@ -207,13 +209,15 @@ describe("loadConfig", () => {
       ].join("\n"),
     );
     process.env.TELEGRAM_BOT_TOKEN = "from-process";
+    process.env.TELEGRAM_ALLOWED_USER_IDS = "789";
+    process.env.CODEX_MODEL = "from-process-model";
 
     const config = loadConfig();
 
-    expect(config.telegramBotToken).toBe("from-process");
+    expect(config.telegramBotToken).toBe("from-file");
     expect(config.telegramAllowedUserIds).toEqual([123, 456]);
     expect(config.codexApiKey).toBe("from-dotenv");
-    expect(config.codexModel).toBe("gpt-4.1");
+    expect(config.codexModel).toBe("from-process-model");
     expect(config.codexSandboxMode).toBe("read-only");
     expect(config.codexApprovalPolicy).toBe("on-failure");
     expect(config.launchProfiles).toEqual([
@@ -372,6 +376,7 @@ describe("loadConfig", () => {
     process.env.TELEGRAM_TYPING_INTERVAL_MS = "9000";
     process.env.CODEX_NO_OUTPUT_STATUS_MS = "10000";
     process.env.CODEX_TURN_HARD_TIMEOUT_MS = "11000";
+    process.env.TELECODEX_VSC_HANDOFF_DIRECT_RESUME_MAX_SESSION_BYTES = "12000";
 
     const config = loadConfig();
 
@@ -380,6 +385,7 @@ describe("loadConfig", () => {
     expect(config.telegramTypingIntervalMs).toBe(9000);
     expect(config.codexNoOutputStatusMs).toBe(10000);
     expect(config.codexTurnHardTimeoutMs).toBe(11000);
+    expect(config.vscHandoffDirectResumeMaxSessionBytes).toBe(12000);
   });
 
   it("falls back to defaults for invalid optional enum values", () => {

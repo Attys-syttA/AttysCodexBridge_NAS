@@ -7,7 +7,7 @@ Fontos különbség: ez nem élő chat-szinkron a VS Code panel és a Telegram k
 ## Alapfogalmak
 
 - **Telegram context:** egy sima Telegram chat vagy egy forum topic. A bot ezekhez külön sessiont tart.
-- **Workspace:** az a helyi projektmappa, ahol Codex dolgozik, például `<CODEX_WORKS_ON_HOME_PC>\email-header-analyzer`.
+- **Workspace:** az a helyi projektmappa, ahol Codex dolgozik, például `<CODEX_WORKS>\email-header-analyzer`.
 - **Thread ID:** a Codex beszélgetés azonosítója. Ezzel lehet ugyanazt a munkát másik felületen folytatni.
 - **Nincs még thread:** ha `/session` alatt ezt látod: `Thread ID: (még nincs elindítva)`, akkor még nincs mit átadni. Küldj egy valódi üzenetet Codexnek, várd meg, hogy elinduljon a kör, utána lesz thread ID.
 
@@ -36,7 +36,7 @@ Ez megmutatja:
 Ez kiír egy ilyen jellegű parancsot:
 
 ```powershell
-cd '<CODEX_WORKS_ON_HOME_PC>\email-header-analyzer' && codex resume '<thread-id>'
+cd '<CODEX_WORKS>\email-header-analyzer' && codex resume '<thread-id>'
 ```
 
 A `<thread-id>` az az azonosító, amit később `/attach <thread-id>` paranccsal vissza tudsz venni Telegramra.
@@ -85,17 +85,19 @@ Lépések:
 3. Futtasd az átadó scriptet:
 
    ```powershell
-   <CODEX_WORKS>\AttysCodexBridge\scripts\send-vsc-handoff.ps1 -ThreadId <thread-id>
+   <CODEX_WORKS>\AttysCodexBridge\scripts\send-vsc-handoff.ps1 -ThreadId <thread-id> -Model gpt-5.5
    ```
 
    Ha nem abból a workspace-ből futtatod, add meg külön:
 
    ```powershell
-   <CODEX_WORKS>\AttysCodexBridge\scripts\send-vsc-handoff.ps1 -ThreadId <thread-id> -Workspace <CODEX_WORKS>\AttysCodexBridge
+   <CODEX_WORKS>\AttysCodexBridge\scripts\send-vsc-handoff.ps1 -ThreadId <thread-id> -Workspace <CODEX_WORKS>\AttysCodexBridge -Model gpt-5.5
    ```
 
 4. A script Telegram üzenetet küld, és `.telecodex/handoff-inbox.json` rekordot ír.
 5. Ha válaszolsz erre Telegramon, a bot előbb átvált a megadott `thread ID` + `Workspace` párra, és csak utána küldi be az üzenetedet Codexnek.
+
+Ha a VSC oldali thread modellje eltér a bot alapértelmezett modelljétől, add át explicit módon `-Model <modell>` paraméterrel. Például ha a VS Code panelen `5.5` látszik, használd: `-Model gpt-5.5`.
 
 Alapértelmezés:
 
@@ -103,13 +105,13 @@ Alapértelmezés:
 - ha előbb megerősítést akarsz kérni, használd:
 
   ```powershell
-  <CODEX_WORKS>\AttysCodexBridge\scripts\send-vsc-handoff.ps1 -ThreadId <thread-id> -Pending
+  <CODEX_WORKS>\AttysCodexBridge\scripts\send-vsc-handoff.ps1 -ThreadId <thread-id> -Model gpt-5.5 -Pending
   ```
 
 Szintetikus ellenőrzés Telegram küldés és fájlírás nélkül:
 
 ```powershell
-<CODEX_WORKS>\AttysCodexBridge\scripts\send-vsc-handoff.ps1 -ThreadId <thread-id> -DryRun
+<CODEX_WORKS>\AttysCodexBridge\scripts\send-vsc-handoff.ps1 -ThreadId <thread-id> -Model gpt-5.5 -DryRun
 ```
 
 Fontos: ez a script nem a Telegram chat korábbi állapotából találgat. Mindig a megadott `thread ID` és az aktuális vagy megadott `Workspace` kerül átadásra.
