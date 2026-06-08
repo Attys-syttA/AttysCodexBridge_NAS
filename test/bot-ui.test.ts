@@ -22,12 +22,14 @@ describe("bot-ui", () => {
       expect(plain).toContain("/retry");
       expect(plain).toContain("/launch_profiles");
       expect(plain).toContain("/handoff_to");
+      expect(plain).toContain("/restart");
+      expect(plain).toContain("/stop");
     });
 
-    it("lists all 19 commands", () => {
+    it("lists all 21 commands", () => {
       const { plain } = renderHelpMessage();
       const commandMatches = plain.match(/\/\w+/g) ?? [];
-      expect(commandMatches.length).toBe(19);
+      expect(commandMatches.length).toBe(21);
     });
 
     it("returns valid HTML with bold tags", () => {
@@ -62,6 +64,13 @@ describe("bot-ui", () => {
       expect(plain).toContain("Nincs ilyen részletes súgó");
       expect(plain).toContain("attach");
       expect(plain).toContain("handback");
+    });
+
+    it("explains bot lifecycle commands", () => {
+      const { plain } = renderHelpTopicMessage("restart");
+      expect(plain).toContain("/restart");
+      expect(plain).toContain("/stop");
+      expect(plain).toContain("megerősítést kér");
     });
   });
 

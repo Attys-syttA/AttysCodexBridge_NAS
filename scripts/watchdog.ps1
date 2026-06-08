@@ -16,6 +16,7 @@ $healthPath = Join-Path $stateDir 'health.json'
 $pidPath = Join-Path $stateDir 'bot.pid'
 $statusPath = Join-Path $stateDir 'watchdog-status.json'
 $eventPath = Join-Path $stateDir 'watchdog-events.jsonl'
+$stopRequestPath = Join-Path $stateDir 'stop-request.json'
 $envPath = Join-Path $RepoRoot '.env'
 $launcherPath = Join-Path $RepoRoot 'start-attyscodexbridge-workspace.ps1'
 $entrypointPath = Join-Path $RepoRoot 'dist\index.js'
@@ -54,6 +55,23 @@ function Read-JsonFile {
     return Get-Content -LiteralPath $Path -Raw -Encoding utf8 | ConvertFrom-Json
   } catch {
     return $null
+  }
+}
+
+function Test-ActiveStopRequest {
+  $request = Read-JsonFile -Path $stopRequestPath
+  if (-not $request -or $request.action -ne 'stop') {
+    return $false
+  }
+
+  if (-not $request.expiresAt) {
+    return $true
+  }
+
+  try {
+    return ([datetime]$request.expiresAt).ToUniversalTime() -gt (Get-Date).ToUniversalTime()
+  } catch {
+    return $false
   }
 }
 
@@ -263,6 +281,7 @@ if (-not $trackedPid) {
 
 $decision = 'none'
 $restartCount = Get-RecentRestartCount -Since $now.AddMinutes(-1 * $RestartWindowMinutes)
+$activeStopRequest = Test-ActiveStopRequest
 $status = @{
   schemaVersion = 1
   checkedAt = $now.ToString('o')
@@ -274,6 +293,7 @@ $status = @{
   decision = $decision
   statusOnly = [bool]$StatusOnly
   noRestart = [bool]$NoRestart
+  stopRequested = [bool]$activeStopRequest
   trackedBotPid = $trackedPid
   botProcessAlive = [bool]$trackedProcess
   heartbeatAgeSeconds = $heartbeatAgeSeconds
@@ -287,6 +307,13 @@ $status = @{
 
 if ($StatusOnly -or $reason -eq 'healthy') {
   $status.decision = if ($reason -eq 'healthy') { 'observe_healthy' } else { 'observe_only' }
+  Write-JsonFile -Path $statusPath -Value $status
+  Write-JsonLine -Path $eventPath -Value $status
+  return
+}
+
+if ($activeStopRequest) {
+  $status.decision = 'stop_requested_no_restart'
   Write-JsonFile -Path $statusPath -Value $status
   Write-JsonLine -Path $eventPath -Value $status
   return

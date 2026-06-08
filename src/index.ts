@@ -3,6 +3,7 @@ import { checkAuthStatus } from "./codex-auth.js";
 import { findLaunchProfile, formatLaunchProfileBehavior } from "./codex-launch.js";
 import { loadConfig } from "./config.js";
 import { createRuntimeHealthMonitor, type RuntimeHealthMonitor } from "./health.js";
+import { clearBotControlRequest } from "./process-control.js";
 import { SessionRegistry } from "./session-registry.js";
 
 let registry: SessionRegistry | undefined;
@@ -11,6 +12,7 @@ let health: RuntimeHealthMonitor | undefined;
 
 try {
   const config = loadConfig();
+  await clearBotControlRequest(config, "stop");
   health = createRuntimeHealthMonitor(config);
   health.markStarted();
   registry = new SessionRegistry(config);

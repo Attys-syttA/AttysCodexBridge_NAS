@@ -42,6 +42,12 @@ import { friendlyErrorText } from "./error-messages.js";
 import { escapeHTML, formatTelegramHTML } from "./format.js";
 import { createRuntimeHealthMonitor, type RuntimeHealthMonitor } from "./health.js";
 import { findHandoffInboxRecord, removeHandoffInboxRecord } from "./handoff-inbox.js";
+import {
+  requestGracefulBotShutdown,
+  scheduleBotRestart,
+  writeBotControlRequest,
+  type BotControlAction,
+} from "./process-control.js";
 import { SessionRegistry, type ContextHandoff } from "./session-registry.js";
 import { getAvailableBackends, transcribeAudio } from "./voice.js";
 import { formatWorkspaceButtonLabel } from "./workspace.js";
@@ -55,10 +61,17 @@ const DEFAULT_TELEGRAM_API_TIMEOUT_MS = 20_000;
 const KEYBOARD_PAGE_SIZE = 6;
 const NOOP_PAGE_CALLBACK_DATA = "noop_page";
 const LAUNCH_PROFILES_COMMAND = "/launch_profiles";
+const BOT_CONTROL_CONFIRM_TTL_MS = 2 * 60 * 1000;
 
 type TelegramChatId = number | string;
 type TelegramParseMode = "HTML";
 type KeyboardItem = { label: string; callbackData: string };
+type PendingBotControlConfirmation = {
+  action: BotControlAction;
+  contextKey: TelegramContextKey;
+  requestedBy?: string;
+  expiresAt: number;
+};
 export type DirectResumeWarning = {
   sessionPath: string;
   sizeBytes: number;
@@ -141,6 +154,7 @@ export function createBot(
   const pendingUnsafeLaunchConfirmations = new Map<TelegramContextKey, string>();
   const pendingModelButtons = new Map<TelegramContextKey, KeyboardItem[]>();
   const pendingEffortButtons = new Map<TelegramContextKey, KeyboardItem[]>();
+  const pendingBotControlConfirmations = new Map<string, PendingBotControlConfirmation>();
   const lastPromptInput = new Map<TelegramContextKey, CodexPromptInput>();
 
   registry.onRemove((key) => {
@@ -148,6 +162,11 @@ export function createBot(
     pendingLaunchPicks.delete(key);
     pendingLaunchButtons.delete(key);
     pendingUnsafeLaunchConfirmations.delete(key);
+    for (const [nonce, pending] of pendingBotControlConfirmations) {
+      if (pending.contextKey === key) {
+        pendingBotControlConfirmations.delete(nonce);
+      }
+    }
     lastPromptInput.delete(key);
   });
 
@@ -166,6 +185,19 @@ export function createBot(
     const state = contextBusy.get(contextKey);
     const session = registry.get(contextKey);
     return Boolean(state?.processing || state?.switching || state?.transcribing || session?.isProcessing());
+  };
+
+  const isBotControlBusy = (contextKey: TelegramContextKey): boolean => {
+    return Boolean(health.getSnapshot().activeRequest || isBusy(contextKey));
+  };
+
+  const getRequesterLabel = (ctx: Context): string | undefined => {
+    if (!ctx.from) {
+      return undefined;
+    }
+
+    const name = [ctx.from.first_name, ctx.from.last_name].filter(Boolean).join(" ").trim();
+    return name ? `${name} (${ctx.from.id})` : String(ctx.from.id);
   };
 
   const getContextSession = async (
@@ -1351,6 +1383,62 @@ export function createBot(
     await safeReply(ctx, escapeHTML(lines.join("\n")), { fallbackText: lines.join("\n") });
   });
 
+  const requestBotControlConfirmation = async (ctx: Context, action: BotControlAction): Promise<void> => {
+    const contextKey = contextKeyFromCtx(ctx);
+    if (!contextKey) {
+      return;
+    }
+
+    if (isBotControlBusy(contextKey)) {
+      const text = action === "restart"
+        ? "Futó kérés közben nem indítom újra a botot. Várd meg, vagy használd a /abort parancsot."
+        : "Futó kérés közben nem állítom le a botot. Várd meg, vagy használd a /abort parancsot.";
+      await safeReply(ctx, escapeHTML(text), { fallbackText: text });
+      return;
+    }
+
+    const nonce = randomUUID();
+    const requestedBy = getRequesterLabel(ctx);
+    pendingBotControlConfirmations.set(nonce, {
+      action,
+      contextKey,
+      ...(requestedBy ? { requestedBy } : {}),
+      expiresAt: Date.now() + BOT_CONTROL_CONFIRM_TTL_MS,
+    });
+
+    const keyboard = new InlineKeyboard()
+      .text(action === "restart" ? "Restart megerősítése" : "Stop megerősítése", `botctl_${action}_yes:${nonce}`)
+      .row()
+      .text("Mégse", `botctl_${action}_no:${nonce}`);
+    const lines = action === "restart"
+      ? [
+          "<b>Biztosan újraindítsam a botot?</b>",
+          "",
+          "A jelenlegi bot finoman leáll, majd a launcher újra elindítja.",
+          "Codex/MCP/VS Code folyamatokat nem állít le.",
+        ]
+      : [
+          "<b>Biztosan leállítsam a botot?</b>",
+          "",
+          "Csak az AttysCodexBridge bot áll le.",
+          "A watchdog rövid ideig szándékos leállításként kezeli, és nem indítja vissza azonnal.",
+        ];
+    const plain = lines.map((line) => line.replace(/<[^>]+>/g, "")).join("\n");
+
+    await safeReply(ctx, lines.join("\n"), {
+      fallbackText: plain,
+      replyMarkup: keyboard,
+    });
+  };
+
+  bot.command("restart", async (ctx) => {
+    await requestBotControlConfirmation(ctx, "restart");
+  });
+
+  bot.command("stop", async (ctx) => {
+    await requestBotControlConfirmation(ctx, "stop");
+  });
+
   const openLaunchProfilesPicker = async (ctx: Context): Promise<void> => {
     const chatId = ctx.chat?.id;
     if (!chatId) {
@@ -1821,6 +1909,67 @@ export function createBot(
   bot.callbackQuery(NOOP_PAGE_CALLBACK_DATA, async (ctx) => {
     await ctx.answerCallbackQuery();
   });
+
+  bot.callbackQuery(/^botctl_(restart|stop)_(yes|no):(.+)$/, async (ctx) => {
+    const chatId = ctx.chat?.id;
+    const messageId = ctx.callbackQuery.message?.message_id;
+    const action = ctx.match?.[1] as BotControlAction | undefined;
+    const decision = ctx.match?.[2];
+    const nonce = ctx.match?.[3];
+    const contextKey = contextKeyFromCtx(ctx);
+
+    if (!chatId || !messageId || !action || !decision || !nonce || !contextKey) {
+      await ctx.answerCallbackQuery();
+      return;
+    }
+
+    const pending = pendingBotControlConfirmations.get(nonce);
+    if (!pending || pending.action !== action || pending.contextKey !== contextKey || pending.expiresAt < Date.now()) {
+      pendingBotControlConfirmations.delete(nonce);
+      await ctx.answerCallbackQuery({ text: "A megerősítés lejárt" });
+      await safeEditMessage(bot, chatId, messageId, escapeHTML("A megerősítés lejárt. Futtasd újra a parancsot."), {
+        fallbackText: "A megerősítés lejárt. Futtasd újra a parancsot.",
+      });
+      return;
+    }
+
+    pendingBotControlConfirmations.delete(nonce);
+    if (decision === "no") {
+      await ctx.answerCallbackQuery({ text: "Mégse" });
+      await safeEditMessage(bot, chatId, messageId, escapeHTML("Mégse. Nem változott semmi."), {
+        fallbackText: "Mégse. Nem változott semmi.",
+      });
+      return;
+    }
+
+    if (isBotControlBusy(contextKey)) {
+      const text = "Közben elindult egy kérés, ezért nem állítom le a botot. Várd meg, vagy használd a /abort parancsot.";
+      await ctx.answerCallbackQuery({ text: "Futó kérés van" });
+      await safeEditMessage(bot, chatId, messageId, escapeHTML(text), { fallbackText: text });
+      return;
+    }
+
+    try {
+      await writeBotControlRequest(config, action, pending.requestedBy);
+      if (action === "restart") {
+        scheduleBotRestart();
+      }
+
+      const text = action === "restart"
+        ? "Restart indul. A bot pár másodpercre elhallgat, majd visszatér."
+        : "Stop indul. Csak az AttysCodexBridge bot áll le.";
+      await ctx.answerCallbackQuery({ text: action === "restart" ? "Restart indul" : "Stop indul" });
+      await safeEditMessage(bot, chatId, messageId, escapeHTML(text), { fallbackText: text });
+      requestGracefulBotShutdown();
+    } catch (error) {
+      const message = `Nem sikerült elindítani a műveletet: ${friendlyErrorText(error)}`;
+      await ctx.answerCallbackQuery({ text: "Nem sikerült" });
+      await safeEditMessage(bot, chatId, messageId, `<b>Nem sikerült:</b> ${escapeHTML(friendlyErrorText(error))}`, {
+        fallbackText: message,
+      });
+    }
+  });
+
   handlePageCallback(/^sess_page_(\d+)$/, "sess", pendingSessionButtons, "Lejárt, futtasd újra: /sessions");
   handlePageCallback(/^ws_page_(\d+)$/, "ws", pendingWorkspaceButtons, "Lejárt, futtasd újra: /new");
   handlePageCallback(/^proj_page_(\d+)$/, "proj", pendingProjectWorkspaceButtons, "Lejárt, futtasd újra: /projekts");
@@ -2595,6 +2744,8 @@ export async function registerCommands(bot: Bot<Context>): Promise<void> {
     { command: "logout", description: "Kijelentkezés" },
     { command: "voice", description: "Hangfelismerés állapota" },
     { command: "watchdog", description: "Bridge állapotkép" },
+    { command: "restart", description: "Bot finom újraindítása megerősítéssel" },
+    { command: "stop", description: "Bot leállítása megerősítéssel" },
     { command: "handback", description: "Szál visszaadása Codex CLI-nek" },
     { command: "handoff_to", description: "Szál átadása célgépnek" },
     { command: "attach", description: "Codex szál csatolása ehhez a témához" },
