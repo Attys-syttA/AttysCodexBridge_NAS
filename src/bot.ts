@@ -196,7 +196,11 @@ export function createBot(
   };
 
   const blockPromptForPendingHandoff = async (ctx: Context, contextKey: TelegramContextKey): Promise<boolean> => {
-    const handoff = registry.getHandoff(contextKey);
+    const handoff = (await loadHandoffInboxRecord(config, contextKey)) ?? registry.getHandoff(contextKey);
+    if (handoff) {
+      registry.setHandoff(contextKey, handoff);
+    }
+
     if (!handoff || !shouldBlockPromptForHandoff(handoff)) {
       return false;
     }
@@ -1117,6 +1121,7 @@ export function createBot(
         const info = await session.newThread();
         updateSessionMetadata(contextKey, session);
         registry.clearHandoff(contextKey);
+        await clearHandoffInboxRecord(config, contextKey);
         const label = isTopicContext(contextKey) ? "Új szál létrehozva ehhez a témához." : "Új szál létrehozva.";
         const plainText = `${label}\n\n${renderSessionInfoPlain(config, info)}`;
         const html = `<b>${escapeHTML(label)}</b>\n\n${renderSessionInfoHTML(config, info)}`;
@@ -1169,6 +1174,7 @@ export function createBot(
         const info = await session.newThread();
         updateSessionMetadata(contextKey, session);
         registry.clearHandoff(contextKey);
+        await clearHandoffInboxRecord(config, contextKey);
         const label = isTopicContext(contextKey)
           ? "Az aktív projekt megerősítve ehhez a témához."
           : "Az aktív projekt megerősítve ehhez a chathez.";
@@ -1554,7 +1560,10 @@ export function createBot(
       return;
     }
 
-    if (!getThread(threadId)) {
+    const handoff = (await loadHandoffInboxRecord(config, contextKey)) ?? registry.getHandoff(contextKey);
+    const threadRecord = getThread(threadId);
+    const matchesHandoff = handoff?.threadId === threadId;
+    if (!threadRecord && !matchesHandoff) {
       await safeReply(ctx, `<b>Nem sikerült:</b> ${escapeHTML(`Ismeretlen Codex szál: ${threadId}`)}`, {
         fallbackText: `Nem sikerült: Ismeretlen Codex szál: ${threadId}`,
       });
@@ -1564,9 +1573,10 @@ export function createBot(
     const busyState = getBusyState(contextKey);
     busyState.switching = true;
     try {
-      const info = await session.switchSession(threadId);
+      const info = await session.switchSession(threadId, matchesHandoff ? handoff.workspace : undefined);
       updateSessionMetadata(contextKey, session);
       setAttachedHandoff(contextKey, info);
+      await clearHandoffInboxRecord(config, contextKey);
       const html = `<b>Szál csatolva.</b>\n\n${renderSessionInfoHTML(config, info)}`;
       const plain = `Szál csatolva.\n\n${renderSessionInfoPlain(config, info)}`;
       await safeReply(ctx, html, { fallbackText: plain });
@@ -1608,6 +1618,7 @@ export function createBot(
         const info = await session.switchSession(threadId);
         updateSessionMetadata(contextKey, session);
         setAttachedHandoff(contextKey, info);
+        await clearHandoffInboxRecord(config, contextKey);
         const html = `<b>Szál váltva.</b>\n\n${renderSessionInfoHTML(config, info)}`;
         const plain = `Szál váltva.\n\n${renderSessionInfoPlain(config, info)}`;
         await safeReply(ctx, html, { fallbackText: plain });
@@ -1815,6 +1826,7 @@ export function createBot(
       const info = await session.switchSession(threadId);
       updateSessionMetadata(contextKey, session);
       setAttachedHandoff(contextKey, info);
+      await clearHandoffInboxRecord(config, contextKey);
       const plainText = `Szál váltva.\n\n${renderSessionInfoPlain(config, info)}`;
       const html = `<b>Szál váltva.</b>\n\n${renderSessionInfoHTML(config, info)}`;
 
@@ -1873,6 +1885,7 @@ export function createBot(
       const info = await session.newThread(workspace);
       updateSessionMetadata(contextKey, session);
       registry.clearHandoff(contextKey);
+      await clearHandoffInboxRecord(config, contextKey);
       const label = isTopicContext(contextKey) ? "Új szál létrehozva ehhez a témához." : "Új szál létrehozva.";
       const plainText = `${label}\n\n${renderSessionInfoPlain(config, info)}`;
       const html = `<b>${escapeHTML(label)}</b>\n\n${renderSessionInfoHTML(config, info)}`;
@@ -1932,6 +1945,7 @@ export function createBot(
       const info = await session.newThread(workspace);
       updateSessionMetadata(contextKey, session);
       registry.clearHandoff(contextKey);
+      await clearHandoffInboxRecord(config, contextKey);
       const label = isTopicContext(contextKey)
         ? "Az aktív projekt megváltozott ennél a témánál."
         : "Az aktív projekt megváltozott ennél a chatnél.";
@@ -2936,6 +2950,100 @@ async function appendHandoffOutboxRecord(
     ...record,
   });
   await appendFile(outboxPathname, `${line}\n`, "utf8");
+}
+
+async function loadHandoffInboxRecord(
+  config: TeleCodexConfig,
+  contextKey: TelegramContextKey,
+): Promise<ContextHandoff | undefined> {
+  const inboxPathname = path.join(config.stateDir, "handoff-inbox.json");
+  let raw: string;
+  try {
+    raw = await readFile(inboxPathname, "utf8");
+  } catch {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    const candidates = Array.isArray(parsed)
+      ? parsed
+      : parsed && typeof parsed === "object"
+        ? Object.entries(parsed as Record<string, unknown>).map(([key, value]) => ({
+            contextKey: key,
+            ...(value && typeof value === "object" ? value : {}),
+          }))
+        : [];
+
+    const entry = candidates.find((candidate) =>
+      candidate &&
+      typeof candidate === "object" &&
+      (candidate as { contextKey?: unknown }).contextKey === contextKey,
+    ) as ({ contextKey?: unknown; handoff?: unknown } & Partial<ContextHandoff>) | undefined;
+    const handoff = entry?.handoff && typeof entry.handoff === "object"
+      ? (entry.handoff as Partial<ContextHandoff>)
+      : entry;
+
+    if (!isContextHandoff(handoff)) {
+      return undefined;
+    }
+
+    if (handoff.expiresAt && Date.parse(handoff.expiresAt) <= Date.now()) {
+      return undefined;
+    }
+
+    return handoff;
+  } catch {
+    return undefined;
+  }
+}
+
+async function clearHandoffInboxRecord(config: TeleCodexConfig, contextKey: TelegramContextKey): Promise<void> {
+  const inboxPathname = path.join(config.stateDir, "handoff-inbox.json");
+  let raw: string;
+  try {
+    raw = await readFile(inboxPathname, "utf8");
+  } catch {
+    return;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (Array.isArray(parsed)) {
+      const remaining = parsed.filter((entry) =>
+        !entry ||
+        typeof entry !== "object" ||
+        (entry as { contextKey?: unknown }).contextKey !== contextKey,
+      );
+      await writeFile(inboxPathname, JSON.stringify(remaining, null, 2), "utf8");
+      return;
+    }
+
+    if (parsed && typeof parsed === "object") {
+      const next = { ...(parsed as Record<string, unknown>) };
+      delete next[contextKey];
+      await writeFile(inboxPathname, JSON.stringify(next, null, 2), "utf8");
+    }
+  } catch {
+    return;
+  }
+}
+
+function isContextHandoff(value: unknown): value is ContextHandoff {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Partial<ContextHandoff>;
+  return (
+    (candidate.status === "none" ||
+      candidate.status === "pending_inbound" ||
+      candidate.status === "attached" ||
+      candidate.status === "pending_vsc_pickup") &&
+    typeof candidate.workspace === "string" &&
+    (typeof candidate.threadId === "string" || candidate.threadId === null) &&
+    typeof candidate.createdAt === "string"
+  );
 }
 
 function splitMarkdownForTelegram(markdown: string): RenderedChunk[] {

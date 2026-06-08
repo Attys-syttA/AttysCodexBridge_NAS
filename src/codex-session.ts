@@ -322,11 +322,11 @@ export class CodexSessionService {
     return this.getInfo();
   }
 
-  async switchSession(threadId: string): Promise<CodexSessionInfo> {
+  async switchSession(threadId: string, workspaceOverride?: string): Promise<CodexSessionInfo> {
     this.ensureIdle("switch session");
 
     const record = getThread(threadId);
-    const workspace = normalizeWorkspacePath(this.config, record?.cwd ?? this.currentWorkspace);
+    const workspace = normalizeWorkspacePath(this.config, record?.cwd ?? workspaceOverride ?? this.currentWorkspace);
     const model = record?.model || undefined;
 
     this.thread = this.getCodex().resumeThread(threadId, this.buildThreadOptions(workspace, model));
