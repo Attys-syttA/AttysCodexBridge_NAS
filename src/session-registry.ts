@@ -5,6 +5,7 @@ import { findLaunchProfile } from "./codex-launch.js";
 import { CodexSessionService } from "./codex-session.js";
 import type { TeleCodexConfig } from "./config.js";
 import type { TelegramContextKey } from "./context-key.js";
+import { normalizeWorkspacePath } from "./workspace.js";
 
 export interface ContextMetadata {
   contextKey: TelegramContextKey;
@@ -37,15 +38,17 @@ export class SessionRegistry {
     }
 
     const meta = this.metadata.get(contextKey);
+    const normalizedWorkspace = normalizeWorkspacePath(this.config, meta?.workspace);
     const launchProfileId = resolveLaunchProfileId(this.config, meta);
-    session = await CodexSessionService.create(this.config, {
-      workspace: meta?.workspace,
+    const createOptions = {
+      workspace: normalizedWorkspace,
       model: meta?.model,
       reasoningEffort: meta?.reasoningEffort,
       launchProfileId,
-      deferThreadStart: options?.deferThreadStart && !meta?.threadId,
       resumeThreadId: meta?.threadId ?? undefined,
-    });
+      ...(options?.deferThreadStart && !meta?.threadId ? { deferThreadStart: true } : {}),
+    };
+    session = await CodexSessionService.create(this.config, createOptions);
 
     this.sessions.set(contextKey, session);
     return session;
@@ -126,9 +129,13 @@ export class SessionRegistry {
       const data = JSON.parse(raw) as ContextMetadata[];
       for (const entry of data) {
         if (entry.contextKey) {
-          this.metadata.set(entry.contextKey, entry);
+          this.metadata.set(entry.contextKey, {
+            ...entry,
+            workspace: normalizeWorkspacePath(this.config, entry.workspace),
+          });
         }
       }
+      this.persistMetadata();
     } catch {
       // Silently ignore load errors.
     }

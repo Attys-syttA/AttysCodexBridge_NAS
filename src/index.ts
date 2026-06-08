@@ -2,15 +2,19 @@ import { createBot, registerCommands } from "./bot.js";
 import { checkAuthStatus } from "./codex-auth.js";
 import { findLaunchProfile, formatLaunchProfileBehavior } from "./codex-launch.js";
 import { loadConfig } from "./config.js";
+import { createRuntimeHealthMonitor, type RuntimeHealthMonitor } from "./health.js";
 import { SessionRegistry } from "./session-registry.js";
 
 let registry: SessionRegistry | undefined;
 let bot: ReturnType<typeof createBot> | undefined;
+let health: RuntimeHealthMonitor | undefined;
 
 try {
   const config = loadConfig();
+  health = createRuntimeHealthMonitor(config);
+  health.markStarted();
   registry = new SessionRegistry(config);
-  bot = createBot(config, registry);
+  bot = createBot(config, registry, health);
   await registerCommands(bot);
 
   console.log("AttysCodexBridge running");
@@ -40,6 +44,7 @@ try {
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
   console.error(`Failed to start AttysCodexBridge: ${message}`);
+  health?.markFatal(error);
   registry?.disposeAll();
   process.exit(1);
 }
@@ -52,11 +57,13 @@ const shutdown = (signal: NodeJS.Signals) => {
   shuttingDown = true;
 
   console.log(`Received ${signal}, shutting down AttysCodexBridge...`);
+  health?.markStopping(signal);
   if (bot) bot.stop();
 
   setTimeout(() => {
     registry?.disposeAll();
     console.log("AttysCodexBridge stopped.");
+    health?.markStopped(0);
     process.exit(0);
   }, 500);
 };
@@ -93,6 +100,7 @@ async function startPolling(): Promise<void> {
     }
 
     console.error(`Fatal polling error: ${message}`);
+    health?.markFatal(error);
     registry?.disposeAll();
     process.exit(1);
   }

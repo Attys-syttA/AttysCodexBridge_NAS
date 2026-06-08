@@ -90,6 +90,9 @@ describe("SessionRegistry", () => {
     telegramBotToken: "bot-token",
     telegramAllowedUserIds: [123],
     telegramAllowedUserIdSet: new Set([123]),
+    hostLabel: "test-host",
+    hostName: "test-machine",
+    userName: "tester",
     workspace: "/workspace/base",
     workspaceRoot: "/workspace",
     stateDir: "/state/telecodex",
@@ -113,6 +116,11 @@ describe("SessionRegistry", () => {
     showTurnTokenUsage: false,
     enableTelegramLogin: true,
     enableTelegramReactions: false,
+    telegramApiTimeoutMs: 20_000,
+    telegramEditDebounceMs: 5_000,
+    telegramTypingIntervalMs: 30_000,
+    codexNoOutputStatusMs: 5 * 60_000,
+    codexTurnHardTimeoutMs: 60 * 60_000,
     ...overrides,
   });
 

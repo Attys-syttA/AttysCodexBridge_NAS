@@ -18,7 +18,7 @@ describe("tool summary formatting", () => {
     ]);
 
     expect(formatToolSummaryLine(toolCounts)).toBe(
-      "Tools used: 3x bash, 2x subagents, web_fetch",
+      "Használt eszközök: 3x bash, 2x subagents, web_fetch",
     );
   });
 

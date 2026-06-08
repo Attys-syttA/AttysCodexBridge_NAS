@@ -88,6 +88,7 @@ AttysCodexBridge can also be used in a multi-repo setup: one bot process can ser
 |---|---|
 | `/start` | Welcome & status (concise for returning users) |
 | `/help` | Grouped command reference |
+| `/help <topic>` | Extended help, e.g. `/help attach`, `/help handback`, `/help session` |
 | `/new` | Start a fresh thread (workspace picker if multiple workspaces) |
 | `/projekts` | Pick the active project for this chat and start a fresh thread there |
 | `/session` | Current thread ID, workspace, model, effort, and token totals |
@@ -104,6 +105,8 @@ AttysCodexBridge can also be used in a multi-repo setup: one bot process can ser
 | `/voice` | Check voice transcription backend status |
 | `/handback` | Print `codex resume <id>` for CLI handoff |
 | `/attach <id>` | Bind an existing Codex thread to this forum topic |
+
+For the practical handoff workflow between Telegram and Codex CLI / VS Code, see [docs/telegram-thread-handoff.hu.md](docs/telegram-thread-handoff.hu.md).
 
 ### Voice, image & file input
 

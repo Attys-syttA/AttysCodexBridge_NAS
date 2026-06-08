@@ -24,6 +24,7 @@ import {
   formatLaunchProfileBehavior,
   type CodexLaunchProfile,
 } from "./codex-launch.js";
+import { normalizeWorkspaceList, normalizeWorkspacePath } from "./workspace.js";
 
 export interface CodexSessionCallbacks {
   onTextDelta: (delta: string) => void;
@@ -91,7 +92,7 @@ export class CodexSessionService {
 
   static async create(config: TeleCodexConfig, options?: CreateOptions): Promise<CodexSessionService> {
     const service = new CodexSessionService(config);
-    service.currentWorkspace = options?.workspace ?? config.workspace;
+    service.currentWorkspace = normalizeWorkspacePath(config, options?.workspace);
     service.currentModel = options?.model ?? config.codexModel;
     service.currentReasoningEffort = options?.reasoningEffort as ModelReasoningEffort | undefined;
     service.currentLaunchProfile = getLaunchProfile(
@@ -297,7 +298,7 @@ export class CodexSessionService {
   async newThread(workspace?: string, model?: string): Promise<CodexSessionInfo> {
     this.ensureIdle("start a new thread");
 
-    const effectiveWorkspace = workspace ?? this.currentWorkspace;
+    const effectiveWorkspace = normalizeWorkspacePath(this.config, workspace ?? this.currentWorkspace);
     const effectiveModel = model ?? this.currentModel;
     this.thread = this.getCodex().startThread(this.buildThreadOptions(effectiveWorkspace, effectiveModel));
     this.activeThreadLaunchProfile = this.currentLaunchProfile;
@@ -325,7 +326,7 @@ export class CodexSessionService {
     this.ensureIdle("switch session");
 
     const record = getThread(threadId);
-    const workspace = record?.cwd ?? this.currentWorkspace;
+    const workspace = normalizeWorkspacePath(this.config, record?.cwd ?? this.currentWorkspace);
     const model = record?.model || undefined;
 
     this.thread = this.getCodex().resumeThread(threadId, this.buildThreadOptions(workspace, model));
@@ -345,8 +346,11 @@ export class CodexSessionService {
   listWorkspaces(): string[] {
     const threadWorkspaces = listWorkspaces();
     const discoveredWorkspaces = discoverWorkspaceDirectories(this.config.workspaceRoot);
-    const merged = [...new Set([this.currentWorkspace, ...threadWorkspaces, ...discoveredWorkspaces].filter(Boolean))];
-    return merged.sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }));
+    return normalizeWorkspaceList(this.config, [
+      this.currentWorkspace,
+      ...threadWorkspaces,
+      ...discoveredWorkspaces,
+    ]);
   }
 
   listModels(): CodexModelRecord[] {

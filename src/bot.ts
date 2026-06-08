@@ -18,6 +18,7 @@ import { collectArtifactReport, ensureOutDir, formatArtifactSummary } from "./ar
 import {
   formatSessionLabel,
   renderHelpMessage,
+  renderHelpTopicMessage,
   renderWelcomeFirstTime,
   renderWelcomeReturning,
 } from "./bot-ui.js";
@@ -38,16 +39,17 @@ import type { TeleCodexConfig, ToolVerbosity } from "./config.js";
 import { contextKeyFromCtx, isTopicContextKey, parseContextKey, type TelegramContextKey } from "./context-key.js";
 import { friendlyErrorText } from "./error-messages.js";
 import { escapeHTML, formatTelegramHTML } from "./format.js";
+import { createRuntimeHealthMonitor, type RuntimeHealthMonitor } from "./health.js";
 import { SessionRegistry } from "./session-registry.js";
 import { getAvailableBackends, transcribeAudio } from "./voice.js";
+import { formatWorkspaceButtonLabel } from "./workspace.js";
 
 const TELEGRAM_MESSAGE_LIMIT = 4000;
-const EDIT_DEBOUNCE_MS = 1500;
-const TYPING_INTERVAL_MS = 4500;
 const TOOL_OUTPUT_PREVIEW_LIMIT = 500;
 const STREAMING_PREVIEW_LIMIT = 3800;
 const FORMATTED_CHUNK_TARGET = 3000;
 const MAX_AUDIO_FILE_SIZE = 25 * 1024 * 1024;
+const DEFAULT_TELEGRAM_API_TIMEOUT_MS = 20_000;
 const KEYBOARD_PAGE_SIZE = 6;
 const NOOP_PAGE_CALLBACK_DATA = "noop_page";
 const LAUNCH_PROFILES_COMMAND = "/launch_profiles";
@@ -68,6 +70,7 @@ type TextOptions = {
   fallbackText?: string;
   replyMarkup?: InlineKeyboard;
   messageThreadId?: number;
+  timeoutMs?: number;
 };
 
 type RenderedText = {
@@ -96,18 +99,22 @@ function paginateKeyboard(items: KeyboardItem[], page: number, prefix: string): 
 
   if (totalPages > 1) {
     if (currentPage > 0) {
-      keyboard.text("◀️ Prev", `${prefix}_page_${currentPage - 1}`);
+      keyboard.text("◀️ Előző", `${prefix}_page_${currentPage - 1}`);
     }
     keyboard.text(`${currentPage + 1}/${totalPages}`, NOOP_PAGE_CALLBACK_DATA);
     if (currentPage < totalPages - 1) {
-      keyboard.text("Next ▶️", `${prefix}_page_${currentPage + 1}`);
+      keyboard.text("Következő ▶️", `${prefix}_page_${currentPage + 1}`);
     }
   }
 
   return keyboard;
 }
 
-export function createBot(config: TeleCodexConfig, registry: SessionRegistry): Bot<Context> {
+export function createBot(
+  config: TeleCodexConfig,
+  registry: SessionRegistry,
+  health: RuntimeHealthMonitor = createRuntimeHealthMonitor(config),
+): Bot<Context> {
   const bot = new Bot<Context>(config.telegramBotToken);
   bot.api.config.use(autoRetry({ maxRetryAttempts: 3, maxDelaySeconds: 10 }));
 
@@ -215,8 +222,8 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
   };
 
   const sendBusyReply = async (ctx: Context): Promise<void> => {
-    await safeReply(ctx, escapeHTML("Still working on previous message..."), {
-      fallbackText: "Still working on previous message...",
+    await safeReply(ctx, escapeHTML("Még dolgozom az előző üzeneten..."), {
+      fallbackText: "Még dolgozom az előző üzeneten...",
     });
   };
 
@@ -264,8 +271,8 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
       updateSessionMetadata(contextKey, session);
       return true;
     } catch (error) {
-      await safeReply(ctx, escapeHTML(`Failed to create thread: ${friendlyErrorText(error)}`), {
-        fallbackText: `Failed to create thread: ${friendlyErrorText(error)}`,
+      await safeReply(ctx, escapeHTML(`Nem sikerült szálat létrehozni: ${friendlyErrorText(error)}`), {
+        fallbackText: `Nem sikerült szálat létrehozni: ${friendlyErrorText(error)}`,
       });
       return false;
     }
@@ -280,6 +287,7 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
   ): Promise<void> => {
     const parsed = parseContextKey(contextKey);
     const messageThreadId = parsed.messageThreadId;
+    const requestId = randomUUID();
 
     if (isBusy(contextKey)) {
       await sendBusyReply(ctx);
@@ -289,7 +297,7 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
     const busyState = getBusyState(contextKey);
     busyState.processing = true;
 
-    const abortKeyboard = new InlineKeyboard().text("⏹ Abort", `codex_abort:${contextKey}`);
+    const abortKeyboard = new InlineKeyboard().text("⏹ Megszakítás", `codex_abort:${contextKey}`);
     const toolVerbosity: ToolVerbosity = config.toolVerbosity;
     const toolStates = new Map<string, ToolState>();
     const toolCounts = new Map<string, number>();
@@ -306,19 +314,50 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
     let lastRenderedPlan = "";
     let planMessageSending = false;
     let lastTurnUsage: { inputTokens: number; cachedInputTokens: number; outputTokens: number } | undefined;
+    let lastOutputAt = Date.now();
+    let lastStatusMessageAt = 0;
+    let timeoutTriggered = false;
 
     const typingInterval = setInterval(() => {
+      const now = Date.now();
+      if (
+        now - lastOutputAt >= config.codexNoOutputStatusMs &&
+        now - lastStatusMessageAt >= config.codexNoOutputStatusMs
+      ) {
+        lastStatusMessageAt = now;
+        void safeReply(
+          ctx,
+          escapeHTML("Még várok Codex válaszára. Ha ez a kör túllépi a hard timeoutot, automatikusan lezárom."),
+          {
+            fallbackText:
+              "Még várok Codex válaszára. Ha ez a kör túllépi a hard timeoutot, automatikusan lezárom.",
+          },
+        ).catch((error) => {
+          health.markTelegramFailure("telegram_send_failed", error);
+          console.error("Failed to send no-output status message", error);
+        });
+      }
+
       void bot.api
         .sendChatAction(chatId, "typing", {
           ...(messageThreadId ? { message_thread_id: messageThreadId } : {}),
         })
+        .then(() => health.markTyping(requestId))
         .catch(() => {});
-    }, TYPING_INTERVAL_MS);
+    }, config.telegramTypingIntervalMs);
     void bot.api
       .sendChatAction(chatId, "typing", {
         ...(messageThreadId ? { message_thread_id: messageThreadId } : {}),
       })
+      .then(() => health.markTyping(requestId))
       .catch(() => {});
+    const hardTimeout = setTimeout(() => {
+      timeoutTriggered = true;
+      health.markRequestTimeout(requestId, config.codexTurnHardTimeoutMs);
+      void session.abort().catch((error) => {
+        console.error("Failed to abort timed out Codex turn", error);
+      });
+    }, config.codexTurnHardTimeoutMs);
 
     const stopTyping = (): void => {
       clearInterval(typingInterval);
@@ -329,6 +368,10 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
         clearTimeout(flushTimer);
         flushTimer = undefined;
       }
+    };
+
+    const clearHardTimeout = (): void => {
+      clearTimeout(hardTimeout);
     };
 
     const renderPreview = (): RenderedChunk => {
@@ -379,6 +422,7 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
         responseMessageId = message.message_id;
         lastRenderedText = preview.text;
         lastEditAt = Date.now();
+        health.markOutboundTelegramMessage(requestId);
       })();
 
       try {
@@ -402,7 +446,7 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
       }
 
       const now = Date.now();
-      if (!force && now - lastEditAt < EDIT_DEBOUNCE_MS) {
+      if (!force && now - lastEditAt < config.telegramEditDebounceMs) {
         return;
       }
 
@@ -420,6 +464,7 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
         });
         lastRenderedText = nextText.text;
         lastEditAt = Date.now();
+        health.markTelegramEdit(requestId);
       } finally {
         isFlushing = false;
         if (flushPending) {
@@ -434,7 +479,7 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
         return;
       }
 
-      const delay = Math.max(0, EDIT_DEBOUNCE_MS - (Date.now() - lastEditAt));
+      const delay = Math.max(0, config.telegramEditDebounceMs - (Date.now() - lastEditAt));
       flushTimer = setTimeout(() => {
         flushTimer = undefined;
         void flushResponse().catch((error) => {
@@ -470,6 +515,7 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
           parseMode: firstChunk.parseMode,
           fallbackText: firstChunk.fallbackText,
         });
+        health.markTelegramEdit(requestId);
         await removeAbortKeyboard();
       } else {
         const message = await sendTextMessage(bot.api, chatId, firstChunk.text, {
@@ -478,6 +524,7 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
           messageThreadId,
         });
         responseMessageId = message.message_id;
+        health.markOutboundTelegramMessage(requestId);
       }
 
       for (const chunk of remainingChunks) {
@@ -486,6 +533,7 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
           fallbackText: chunk.fallbackText,
           messageThreadId,
         });
+        health.markOutboundTelegramMessage(requestId);
       }
     };
 
@@ -507,8 +555,8 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
 
       const finalText = buildFinalResponseText(accumulatedText);
       if (!finalText) {
-        const html = "<b>✅ Done</b>";
-        const plainText = "✅ Done";
+        const html = "<b>✅ Kész</b>";
+        const plainText = "✅ Kész";
 
         if (responseMessageId) {
           await safeEditMessage(bot, chatId, responseMessageId, html, { fallbackText: plainText });
@@ -525,6 +573,8 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
     const callbacks: CodexSessionCallbacks = {
       onTextDelta: (delta: string) => {
         accumulatedText += delta;
+        lastOutputAt = Date.now();
+        health.markRequestOutput(requestId);
         if (!responseMessageId) {
           void ensureResponseMessage()
             .then(() => {
@@ -539,6 +589,7 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
         scheduleFlush();
       },
       onToolStart: (toolName: string, toolCallId: string) => {
+        health.markRequestStreaming(requestId);
         if (toolVerbosity === "summary") {
           toolCounts.set(toolName, (toolCounts.get(toolName) ?? 0) + 1);
           return;
@@ -561,6 +612,7 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
             fallbackText: messageText.fallbackText,
             messageThreadId,
           });
+          health.markOutboundTelegramMessage(requestId);
           const state = toolStates.get(toolCallId);
           if (!state) {
             return;
@@ -609,9 +661,12 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
             parseMode: state.finalStatus.parseMode,
             fallbackText: state.finalStatus.fallbackText,
             messageThreadId,
-          }).catch((error) => {
-            console.error(`Failed to send tool error message for ${state.toolName}`, error);
-          });
+          })
+            .then(() => health.markOutboundTelegramMessage(requestId))
+            .catch((error) => {
+              health.markTelegramFailure("telegram_send_failed", error);
+              console.error(`Failed to send tool error message for ${state.toolName}`, error);
+            });
           return;
         }
 
@@ -622,9 +677,12 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
         void safeEditMessage(bot, chatId, state.messageId, state.finalStatus.text, {
           parseMode: state.finalStatus.parseMode,
           fallbackText: state.finalStatus.fallbackText,
-        }).catch((error) => {
-          console.error(`Failed to update tool message for ${state.toolName}`, error);
-        });
+        })
+          .then(() => health.markTelegramEdit(requestId))
+          .catch((error) => {
+            health.markTelegramFailure("telegram_edit_failed", error);
+            console.error(`Failed to update tool message for ${state.toolName}`, error);
+          });
       },
       onTodoUpdate: (items) => {
         if (toolVerbosity === "none") {
@@ -643,17 +701,22 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
           void sendTextMessage(bot.api, chatId, rendered, { parseMode: "HTML", messageThreadId })
             .then((msg) => {
               planMessageId = msg.message_id;
+              health.markOutboundTelegramMessage(requestId);
             })
             .catch((err) => {
+              health.markTelegramFailure("telegram_send_failed", err);
               console.error("Failed to send plan message", err);
             })
             .finally(() => {
               planMessageSending = false;
             });
         } else {
-          void safeEditMessage(bot, chatId, planMessageId, rendered, { parseMode: "HTML" }).catch((err) => {
-            console.error("Failed to update plan message", err);
-          });
+          void safeEditMessage(bot, chatId, planMessageId, rendered, { parseMode: "HTML" })
+            .then(() => health.markTelegramEdit(requestId))
+            .catch((err) => {
+              health.markTelegramFailure("telegram_edit_failed", err);
+              console.error("Failed to update plan message", err);
+            });
         }
       },
       onTurnComplete: (usage) => {
@@ -666,25 +729,31 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
       },
     };
 
+    health.startRequest({
+      id: requestId,
+      contextKey,
+      chatId: String(chatId),
+    });
+
     try {
       const authStatus = await checkAuthStatus(config.codexApiKey);
       if (!authStatus.authenticated) {
         await safeReply(
           ctx,
           [
-            "<b>⚠️ Codex is not authenticated.</b>",
+            "<b>⚠️ Codex nincs hitelesítve.</b>",
             "",
             `<code>${escapeHTML(authStatus.detail)}</code>`,
             "",
-            "Use /login to start authentication, or set CODEX_API_KEY on the host.",
+            "A hitelesítés indításához használd a /login parancsot, vagy állítsd be a CODEX_API_KEY értéket a gépen.",
           ].join("\n"),
           {
             fallbackText: [
-              "⚠️ Codex is not authenticated.",
+              "⚠️ Codex nincs hitelesítve.",
               "",
               authStatus.detail,
               "",
-              "Use /login to start authentication, or set CODEX_API_KEY on the host.",
+              "A hitelesítés indításához használd a /login parancsot, vagy állítsd be a CODEX_API_KEY értéket a gépen.",
             ].join("\n"),
           },
         );
@@ -699,6 +768,9 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
       updateSessionMetadata(contextKey, session);
       await finalizeResponse();
     } catch (error) {
+      if (timeoutTriggered) {
+        health.markRequestTimeout(requestId, config.codexTurnHardTimeoutMs);
+      }
       stopTyping();
       clearFlushTimer();
       if (responseMessagePromise) {
@@ -719,13 +791,16 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
         try {
           await deliverRenderedChunks(chunks);
         } catch (telegramError) {
+          health.markTelegramFailure("telegram_send_failed", telegramError);
           console.error("Failed to send error message to Telegram:", telegramError);
         }
       }
     } finally {
       stopTyping();
       clearFlushTimer();
+      clearHardTimeout();
       busyState.processing = false;
+      health.finishRequest(requestId);
     }
   };
 
@@ -766,12 +841,14 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
   };
 
   bot.use(async (ctx, next) => {
+    health.markInboundTelegramUpdate();
+
     const fromId = ctx.from?.id;
     if (!fromId || !config.telegramAllowedUserIdSet.has(fromId)) {
       if (ctx.callbackQuery) {
-        await ctx.answerCallbackQuery({ text: "Unauthorized" }).catch(() => {});
+        await ctx.answerCallbackQuery({ text: "Nincs jogosultság" }).catch(() => {});
       } else if (ctx.chat) {
-        await safeReply(ctx, escapeHTML("Unauthorized"), { fallbackText: "Unauthorized" });
+        await safeReply(ctx, escapeHTML("Nincs jogosultság"), { fallbackText: "Nincs jogosultság" });
       }
       return;
     }
@@ -787,14 +864,14 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
 
     const { contextKey, session } = contextSession;
     const authStatus = await checkAuthStatus(config.codexApiKey);
-    const authWarning = authStatus.authenticated ? undefined : "Not authenticated. Use /login or set CODEX_API_KEY.";
+    const authWarning = authStatus.authenticated ? undefined : "Nincs hitelesítve. Használd a /login parancsot, vagy állítsd be a CODEX_API_KEY értéket.";
     const isReturning = registry.hasMetadata(contextKey);
 
     if (isReturning) {
       const info = session.getInfo();
       const welcome = renderWelcomeReturning(
-        renderSessionInfoHTML(info),
-        renderSessionInfoPlain(info),
+        renderSessionInfoHTML(config, info),
+        renderSessionInfoPlain(config, info),
         isTopicContext(contextKey),
         authWarning,
       );
@@ -802,14 +879,16 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
     } else {
       const welcome = renderWelcomeFirstTime(authWarning);
       const info = session.getInfo();
-      await safeReply(ctx, [welcome.html, "", renderLaunchSummaryHTML(info)].join("\n"), {
-        fallbackText: [welcome.plain, "", renderLaunchSummaryPlain(info)].join("\n"),
+      await safeReply(ctx, [welcome.html, "", renderHostInfoHTML(config), renderLaunchSummaryHTML(info)].join("\n"), {
+        fallbackText: [welcome.plain, "", renderHostInfoPlain(config), renderLaunchSummaryPlain(info)].join("\n"),
       });
     }
   });
 
   bot.command("help", async (ctx) => {
-    const help = renderHelpMessage();
+    const rawText = ctx.message?.text ?? "";
+    const topic = rawText.replace(/^\/help(?:@\w+)?\s*/i, "").trim();
+    const help = topic ? renderHelpTopicMessage(topic) : renderHelpMessage();
     await safeReply(ctx, help.html, { fallbackText: help.plain });
   });
 
@@ -821,14 +900,14 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
     const authStatus = await checkAuthStatus(config.codexApiKey);
     const icon = authStatus.authenticated ? "✅" : "❌";
     const html = [
-      `<b>${icon} Auth status:</b> ${authStatus.authenticated ? "authenticated" : "not authenticated"}`,
-      `<b>Method:</b> <code>${escapeHTML(authStatus.method)}</code>`,
-      `<b>Detail:</b> <code>${escapeHTML(authStatus.detail)}</code>`,
+      `<b>${icon} Hitelesítési állapot:</b> ${authStatus.authenticated ? "hitelesítve" : "nincs hitelesítve"}`,
+      `<b>Módszer:</b> <code>${escapeHTML(authStatus.method)}</code>`,
+      `<b>Részlet:</b> <code>${escapeHTML(authStatus.detail)}</code>`,
     ].join("\n");
     const plain = [
-      `${icon} Auth status: ${authStatus.authenticated ? "authenticated" : "not authenticated"}`,
-      `Method: ${authStatus.method}`,
-      `Detail: ${authStatus.detail}`,
+      `${icon} Hitelesítési állapot: ${authStatus.authenticated ? "hitelesítve" : "nincs hitelesítve"}`,
+      `Módszer: ${authStatus.method}`,
+      `Részlet: ${authStatus.detail}`,
     ].join("\n");
 
     await safeReply(ctx, html, { fallbackText: plain });
@@ -841,8 +920,8 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
 
     const authStatus = await checkAuthStatus(config.codexApiKey);
     if (authStatus.authenticated) {
-      await safeReply(ctx, `<b>✅ Already authenticated</b> via <code>${escapeHTML(authStatus.method)}</code>.`, {
-        fallbackText: `✅ Already authenticated via ${authStatus.method}.`,
+      await safeReply(ctx, `<b>✅ Már hitelesítve van</b> ezzel: <code>${escapeHTML(authStatus.method)}</code>.`, {
+        fallbackText: `✅ Már hitelesítve van ezzel: ${authStatus.method}.`,
       });
       return;
     }
@@ -851,15 +930,15 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
       await safeReply(
         ctx,
         [
-          "<b>Telegram-initiated login is disabled.</b>",
+          "<b>A Telegramból indított bejelentkezés ki van kapcsolva.</b>",
           "",
-          "Run <code>codex login</code> on the host, or set CODEX_API_KEY in .env.",
+          "Futtasd a <code>codex login</code> parancsot a gépen, vagy állítsd be a CODEX_API_KEY értéket a .env fájlban.",
         ].join("\n"),
         {
           fallbackText: [
-            "Telegram-initiated login is disabled.",
+            "A Telegramból indított bejelentkezés ki van kapcsolva.",
             "",
-            "Run 'codex login' on the host, or set CODEX_API_KEY in .env.",
+            "Futtasd a 'codex login' parancsot a gépen, vagy állítsd be a CODEX_API_KEY értéket a .env fájlban.",
           ].join("\n"),
         },
       );
@@ -868,14 +947,14 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
 
     const result = await startLogin();
     if (result.success) {
-      await safeReply(ctx, `<b>🔑 Login initiated.</b>\n\n<code>${escapeHTML(result.message)}</code>`, {
-        fallbackText: `🔑 Login initiated.\n\n${result.message}`,
+      await safeReply(ctx, `<b>🔑 Bejelentkezés elindítva.</b>\n\n<code>${escapeHTML(result.message)}</code>`, {
+        fallbackText: `🔑 Bejelentkezés elindítva.\n\n${result.message}`,
       });
       return;
     }
 
-    await safeReply(ctx, `<b>❌ Login failed.</b>\n\n<code>${escapeHTML(result.message)}</code>`, {
-      fallbackText: `❌ Login failed.\n\n${result.message}`,
+    await safeReply(ctx, `<b>❌ A bejelentkezés nem sikerült.</b>\n\n<code>${escapeHTML(result.message)}</code>`, {
+      fallbackText: `❌ A bejelentkezés nem sikerült.\n\n${result.message}`,
     });
   });
 
@@ -889,15 +968,15 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
       await safeReply(
         ctx,
         [
-          "<b>Cannot logout via Telegram when using CODEX_API_KEY.</b>",
+          "<b>CODEX_API_KEY használata mellett Telegramból nem lehet kijelentkezni.</b>",
           "",
-          "Remove CODEX_API_KEY from .env to use CLI-based auth instead.",
+          "A CLI-alapú hitelesítéshez vedd ki a CODEX_API_KEY értéket a .env fájlból.",
         ].join("\n"),
         {
           fallbackText: [
-            "Cannot logout via Telegram when using CODEX_API_KEY.",
+            "CODEX_API_KEY használata mellett Telegramból nem lehet kijelentkezni.",
             "",
-            "Remove CODEX_API_KEY from .env to use CLI-based auth instead.",
+            "A CLI-alapú hitelesítéshez vedd ki a CODEX_API_KEY értéket a .env fájlból.",
           ].join("\n"),
         },
       );
@@ -906,36 +985,36 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
 
     if (!config.enableTelegramLogin) {
       await safeReply(ctx, [
-        "<b>Telegram-initiated auth management is disabled.</b>",
+        "<b>A Telegramból indított hitelesítéskezelés ki van kapcsolva.</b>",
         "",
-        "Run <code>codex logout</code> on the host.",
+        "Futtasd a <code>codex logout</code> parancsot a gépen.",
       ].join("\n"), {
         fallbackText: [
-          "Telegram-initiated auth management is disabled.",
+          "A Telegramból indított hitelesítéskezelés ki van kapcsolva.",
           "",
-          "Run 'codex logout' on the host.",
+          "Futtasd a 'codex logout' parancsot a gépen.",
         ].join("\n"),
       });
       return;
     }
 
     if (!authStatus.authenticated) {
-      await safeReply(ctx, escapeHTML("Not currently authenticated."), {
-        fallbackText: "Not currently authenticated.",
+      await safeReply(ctx, escapeHTML("Jelenleg nincs hitelesítve."), {
+        fallbackText: "Jelenleg nincs hitelesítve.",
       });
       return;
     }
 
     const result = await startLogout();
     if (result.success) {
-      await safeReply(ctx, `<b>🔓 Logged out.</b>\n\n${escapeHTML(result.message)}`, {
-        fallbackText: `🔓 Logged out.\n\n${result.message}`,
+      await safeReply(ctx, `<b>🔓 Kijelentkezve.</b>\n\n${escapeHTML(result.message)}`, {
+        fallbackText: `🔓 Kijelentkezve.\n\n${result.message}`,
       });
       return;
     }
 
-    await safeReply(ctx, `<b>❌ Logout failed.</b>\n\n<code>${escapeHTML(result.message)}</code>`, {
-      fallbackText: `❌ Logout failed.\n\n${result.message}`,
+    await safeReply(ctx, `<b>❌ A kijelentkezés nem sikerült.</b>\n\n<code>${escapeHTML(result.message)}</code>`, {
+      fallbackText: `❌ A kijelentkezés nem sikerült.\n\n${result.message}`,
     });
   });
 
@@ -950,17 +1029,17 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
       await safeReply(
         ctx,
         [
-          "<b>Voice transcription is not available.</b>",
+          "<b>A hangfelismerés nem érhető el.</b>",
           "",
-          "Install <code>parakeet-coreml</code> + ffmpeg, or set <code>OPENAI_API_KEY</code>.",
-          "<i>Note: voice transcription uses OPENAI_API_KEY, not CODEX_API_KEY.</i>",
+          "Telepítsd a <code>parakeet-coreml</code> + ffmpeg párost, vagy állítsd be az <code>OPENAI_API_KEY</code> értéket.",
+          "<i>Megjegyzés: a hangfelismerés OPENAI_API_KEY-t használ, nem CODEX_API_KEY-t.</i>",
         ].join("\n"),
         {
           fallbackText: [
-            "Voice transcription is not available.",
+            "A hangfelismerés nem érhető el.",
             "",
-            "Install parakeet-coreml + ffmpeg, or set OPENAI_API_KEY.",
-            "Note: voice transcription uses OPENAI_API_KEY, not CODEX_API_KEY.",
+            "Telepítsd a parakeet-coreml + ffmpeg párost, vagy állítsd be az OPENAI_API_KEY értéket.",
+            "Megjegyzés: a hangfelismerés OPENAI_API_KEY-t használ, nem CODEX_API_KEY-t.",
           ].join("\n"),
         },
       );
@@ -968,8 +1047,8 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
     }
 
     const joined = backends.join(" + ");
-    await safeReply(ctx, `<b>Voice backends:</b> <code>${escapeHTML(joined)}</code>`, {
-      fallbackText: `Voice backends: ${joined}`,
+    await safeReply(ctx, `<b>Hangfelismerési backendek:</b> <code>${escapeHTML(joined)}</code>`, {
+      fallbackText: `Hangfelismerési backendek: ${joined}`,
     });
   });
 
@@ -986,8 +1065,8 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
 
     const { contextKey, session } = contextSession;
     if (isBusy(contextKey)) {
-      await safeReply(ctx, escapeHTML("Cannot create a new thread while a prompt is running."), {
-        fallbackText: "Cannot create a new thread while a prompt is running.",
+      await safeReply(ctx, escapeHTML("Futó kérés közben nem lehet új szálat létrehozni."), {
+        fallbackText: "Futó kérés közben nem lehet új szálat létrehozni.",
       });
       return;
     }
@@ -997,13 +1076,13 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
       try {
         const info = await session.newThread();
         updateSessionMetadata(contextKey, session);
-        const label = isTopicContext(contextKey) ? "New thread created for this topic." : "New thread created.";
-        const plainText = `${label}\n\n${renderSessionInfoPlain(info)}`;
-        const html = `<b>${escapeHTML(label)}</b>\n\n${renderSessionInfoHTML(info)}`;
+        const label = isTopicContext(contextKey) ? "Új szál létrehozva ehhez a témához." : "Új szál létrehozva.";
+        const plainText = `${label}\n\n${renderSessionInfoPlain(config, info)}`;
+        const html = `<b>${escapeHTML(label)}</b>\n\n${renderSessionInfoHTML(config, info)}`;
         await safeReply(ctx, html, { fallbackText: plainText });
       } catch (error) {
-        await safeReply(ctx, `<b>Failed:</b> ${escapeHTML(friendlyErrorText(error))}`, {
-          fallbackText: `Failed: ${friendlyErrorText(error)}`,
+        await safeReply(ctx, `<b>Nem sikerült:</b> ${escapeHTML(friendlyErrorText(error))}`, {
+          fallbackText: `Nem sikerült: ${friendlyErrorText(error)}`,
         });
       }
       return;
@@ -1012,14 +1091,14 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
     pendingWorkspacePicks.set(contextKey, workspaces);
     const currentWorkspace = session.getCurrentWorkspace();
     const workspaceButtons = workspaces.map((workspace, index) => ({
-      label: `${workspace === currentWorkspace ? "📂" : "📁"} ${getWorkspaceShortName(workspace)}`,
+      label: formatWorkspaceButtonLabel(config, workspace, { current: workspace === currentWorkspace }),
       callbackData: `ws_${index}`,
     }));
     pendingWorkspaceButtons.set(contextKey, workspaceButtons);
     const keyboard = paginateKeyboard(workspaceButtons, 0, "ws");
 
-    await safeReply(ctx, "<b>Select workspace for new thread:</b>", {
-      fallbackText: "Select workspace for new thread:",
+    await safeReply(ctx, "<b>Válassz munkamappát az új szálhoz:</b>", {
+      fallbackText: "Válassz munkamappát az új szálhoz:",
       replyMarkup: keyboard,
     });
   });
@@ -1037,8 +1116,8 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
 
     const { contextKey, session } = contextSession;
     if (isBusy(contextKey)) {
-      await safeReply(ctx, escapeHTML("Cannot switch project while a prompt is running."), {
-        fallbackText: "Cannot switch project while a prompt is running.",
+      await safeReply(ctx, escapeHTML("Futó kérés közben nem lehet projektet váltani."), {
+        fallbackText: "Futó kérés közben nem lehet projektet váltani.",
       });
       return;
     }
@@ -1049,14 +1128,14 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
         const info = await session.newThread();
         updateSessionMetadata(contextKey, session);
         const label = isTopicContext(contextKey)
-          ? "Active project confirmed for this topic."
-          : "Active project confirmed for this chat.";
-        const plainText = `${label}\nProject: ${getWorkspaceShortName(info.workspace)}\n\n${renderSessionInfoPlain(info)}`;
-        const html = `<b>${escapeHTML(label)}</b>\nProject: <code>${escapeHTML(getWorkspaceShortName(info.workspace))}</code>\n\n${renderSessionInfoHTML(info)}`;
+          ? "Az aktív projekt megerősítve ehhez a témához."
+          : "Az aktív projekt megerősítve ehhez a chathez.";
+        const plainText = `${label}\nProjekt: ${getWorkspaceShortName(info.workspace)}\n\n${renderSessionInfoPlain(config, info)}`;
+        const html = `<b>${escapeHTML(label)}</b>\nProjekt: <code>${escapeHTML(getWorkspaceShortName(info.workspace))}</code>\n\n${renderSessionInfoHTML(config, info)}`;
         await safeReply(ctx, html, { fallbackText: plainText });
       } catch (error) {
-        await safeReply(ctx, `<b>Failed:</b> ${escapeHTML(friendlyErrorText(error))}`, {
-          fallbackText: `Failed: ${friendlyErrorText(error)}`,
+        await safeReply(ctx, `<b>Nem sikerült:</b> ${escapeHTML(friendlyErrorText(error))}`, {
+          fallbackText: `Nem sikerült: ${friendlyErrorText(error)}`,
         });
       }
       return;
@@ -1065,14 +1144,14 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
     pendingProjectWorkspacePicks.set(contextKey, workspaces);
     const currentWorkspace = session.getCurrentWorkspace();
     const workspaceButtons = workspaces.map((workspace, index) => ({
-      label: `${workspace === currentWorkspace ? "📂" : "📁"} ${getWorkspaceShortName(workspace)}`,
+      label: formatWorkspaceButtonLabel(config, workspace, { current: workspace === currentWorkspace }),
       callbackData: `proj_${index}`,
     }));
     pendingProjectWorkspaceButtons.set(contextKey, workspaceButtons);
     const keyboard = paginateKeyboard(workspaceButtons, 0, "proj");
 
-    await safeReply(ctx, "<b>Select project for this chat:</b>", {
-      fallbackText: "Select project for this chat:",
+    await safeReply(ctx, "<b>Válassz projektet ehhez a chathez:</b>", {
+      fallbackText: "Válassz projektet ehhez a chathez:",
       replyMarkup: keyboard,
     });
   });
@@ -1086,12 +1165,12 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
     const { session } = contextSession;
     try {
       await session.abort();
-      await safeReply(ctx, escapeHTML("Aborted current operation"), {
-        fallbackText: "Aborted current operation",
+      await safeReply(ctx, escapeHTML("A futó művelet megszakítva."), {
+        fallbackText: "A futó művelet megszakítva.",
       });
     } catch (error) {
-      await safeReply(ctx, `<b>Failed:</b> ${escapeHTML(friendlyErrorText(error))}`, {
-        fallbackText: `Failed: ${friendlyErrorText(error)}`,
+      await safeReply(ctx, `<b>Nem sikerült:</b> ${escapeHTML(friendlyErrorText(error))}`, {
+        fallbackText: `Nem sikerült: ${friendlyErrorText(error)}`,
       });
     }
   });
@@ -1115,8 +1194,8 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
 
     const cached = lastPromptInput.get(contextKey);
     if (!cached) {
-      await safeReply(ctx, escapeHTML("Nothing to retry. Send a message first."), {
-        fallbackText: "Nothing to retry. Send a message first.",
+      await safeReply(ctx, escapeHTML("Nincs mit újraküldeni. Előbb küldj egy üzenetet."), {
+        fallbackText: "Nincs mit újraküldeni. Előbb küldj egy üzenetet.",
       });
       return;
     }
@@ -1138,12 +1217,34 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
 
     const { contextKey, session } = contextSession;
     const info = session.getInfo();
-    const contextLabel = isTopicContext(contextKey) ? "Topic session" : "Chat session";
+    const contextLabel = isTopicContext(contextKey) ? "Téma szál" : "Chat szál";
 
-    const plainLines = [`${contextLabel}:`, renderSessionInfoPlain(info)];
-    const htmlLines = [`<b>${escapeHTML(contextLabel)}:</b>`, renderSessionInfoHTML(info)];
+    const plainLines = [`${contextLabel}:`, renderSessionInfoPlain(config, info)];
+    const htmlLines = [`<b>${escapeHTML(contextLabel)}:</b>`, renderSessionInfoHTML(config, info)];
 
     await safeReply(ctx, htmlLines.join("\n"), { fallbackText: plainLines.join("\n") });
+  });
+
+  bot.command("watchdog", async (ctx) => {
+    const snapshot = health.getSnapshot();
+    const active = snapshot.activeRequest;
+    const lines = [
+      "Watchdog bridge állapot:",
+      `Host: ${snapshot.host.label}`,
+      `Gép: ${snapshot.host.name}\\${snapshot.host.user}`,
+      `Állapot: ${snapshot.status}`,
+      `PID: ${snapshot.process.pid}`,
+      `Frissítve: ${snapshot.updatedAt}`,
+      `Utolsó bejövő: ${snapshot.lastInboundTelegramUpdateAt ?? "(nincs)"}`,
+      `Utolsó kimenő: ${snapshot.lastOutboundTelegramMessageAt ?? "(nincs)"}`,
+      `Utolsó edit: ${snapshot.lastTelegramEditAt ?? "(nincs)"}`,
+      active
+        ? `Aktív kérés: ${active.status}, indult: ${active.startedAt}, utolsó aktivitás: ${active.lastActivityAt}`
+        : "Aktív kérés: nincs",
+      snapshot.lastError ? `Utolsó hiba: ${snapshot.lastError.type}: ${snapshot.lastError.message}` : "Utolsó hiba: nincs",
+    ];
+
+    await safeReply(ctx, escapeHTML(lines.join("\n")), { fallbackText: lines.join("\n") });
   });
 
   const openLaunchProfilesPicker = async (ctx: Context): Promise<void> => {
@@ -1159,8 +1260,8 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
 
     const { contextKey, session } = contextSession;
     if (isBusy(contextKey)) {
-      await safeReply(ctx, escapeHTML("Cannot change launch profile while a prompt is running."), {
-        fallbackText: "Cannot change launch profile while a prompt is running.",
+      await safeReply(ctx, escapeHTML("Futó kérés közben nem lehet indítási profilt váltani."), {
+        fallbackText: "Futó kérés közben nem lehet indítási profilt váltani.",
       });
       return;
     }
@@ -1181,26 +1282,26 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
 
     const keyboard = paginateKeyboard(launchButtons, 0, "launch");
     const htmlLines = [
-      `<b>Selected launch profile:</b> <code>${escapeHTML(selectedLaunchProfile.label)}</code>`,
-      `<b>Behavior:</b> <code>${escapeHTML(formatLaunchProfileBehavior(selectedLaunchProfile))}</code>`,
+      `<b>Kiválasztott indítási profil:</b> <code>${escapeHTML(selectedLaunchProfile.label)}</code>`,
+      `<b>Működés:</b> <code>${escapeHTML(formatLaunchProfileBehavior(selectedLaunchProfile))}</code>`,
       "",
-      "Select a profile for new or reattached threads:",
+      "Válassz profilt az új vagy újracsatolt szálakhoz:",
     ];
     const plainLines = [
-      `Selected launch profile: ${selectedLaunchProfile.label}`,
-      `Behavior: ${formatLaunchProfileBehavior(selectedLaunchProfile)}`,
+      `Kiválasztott indítási profil: ${selectedLaunchProfile.label}`,
+      `Működés: ${formatLaunchProfileBehavior(selectedLaunchProfile)}`,
       "",
-      "Select a profile for new or reattached threads:",
+      "Válassz profilt az új vagy újracsatolt szálakhoz:",
     ];
 
     if (selectedLaunchProfile.unsafe) {
-      htmlLines.splice(2, 0, "⚠️ <i>Selected profile uses danger-full-access.</i>");
-      plainLines.splice(2, 0, "⚠️ Selected profile uses danger-full-access.");
+      htmlLines.splice(2, 0, "⚠️ <i>A kiválasztott profil danger-full-access módot használ.</i>");
+      plainLines.splice(2, 0, "⚠️ A kiválasztott profil danger-full-access módot használ.");
     }
 
     if (info.nextLaunchProfileId) {
-      htmlLines.splice(2, 0, `<b>Active thread still uses:</b> <code>${escapeHTML(info.launchProfileLabel)}</code>`);
-      plainLines.splice(2, 0, `Active thread still uses: ${info.launchProfileLabel}`);
+      htmlLines.splice(2, 0, `<b>Az aktív szál még ezt használja:</b> <code>${escapeHTML(info.launchProfileLabel)}</code>`);
+      plainLines.splice(2, 0, `Az aktív szál még ezt használja: ${info.launchProfileLabel}`);
     }
 
     await safeReply(ctx, htmlLines.join("\n"), {
@@ -1220,15 +1321,15 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
 
     const { contextKey, session } = contextSession;
     if (isBusy(contextKey)) {
-      await safeReply(ctx, escapeHTML("Cannot hand back while a prompt is running. Use /abort first."), {
-        fallbackText: "Cannot hand back while a prompt is running. Use /abort first.",
+      await safeReply(ctx, escapeHTML("Futó kérés közben nem lehet visszaadni a szálat. Előbb használd a /abort parancsot."), {
+        fallbackText: "Futó kérés közben nem lehet visszaadni a szálat. Előbb használd a /abort parancsot.",
       });
       return;
     }
 
     if (!session.hasActiveThread()) {
-      await safeReply(ctx, escapeHTML("No active thread to hand back."), {
-        fallbackText: "No active thread to hand back.",
+      await safeReply(ctx, escapeHTML("Nincs aktív szál, amit vissza lehetne adni."), {
+        fallbackText: "Nincs aktív szál, amit vissza lehetne adni.",
       });
       return;
     }
@@ -1241,11 +1342,11 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
         await safeReply(
           ctx,
           escapeHTML(
-            "This thread has not started yet, so there is no resumable thread ID. Send a message to create one, or use /new to start fresh.",
+            "Ez a szál még nem indult el, ezért nincs folytatható thread ID. Küldj egy üzenetet a létrehozáshoz, vagy használd a /new parancsot.",
           ),
           {
             fallbackText:
-              "This thread has not started yet, so there is no resumable thread ID. Send a message to create one, or use /new to start fresh.",
+              "Ez a szál még nem indult el, ezért nincs folytatható thread ID. Küldj egy üzenetet a létrehozáshoz, vagy használd a /new parancsot.",
           },
         );
         return;
@@ -1270,35 +1371,35 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
       }
 
       const plainText = [
-        "🔄 Thread handed back to Codex CLI.",
+        "🔄 Szál visszaadva a Codex CLI-nek.",
         "",
-        "Run this in your terminal:",
+        "Ezt futtasd a terminálban:",
         resumeCommand,
         copiedToClipboard ? "" : undefined,
-        copiedToClipboard ? "📋 Command copied to clipboard!" : undefined,
+        copiedToClipboard ? "📋 Parancs vágólapra másolva!" : undefined,
         "",
-        "Send any message here to start a new AttysCodexBridge thread.",
+        "Küldj ide bármilyen üzenetet egy új AttysCodexBridge szál indításához.",
       ]
         .filter((line): line is string => line !== undefined)
         .join("\n");
 
       const html = [
-        "<b>🔄 Thread handed back to Codex CLI.</b>",
+        "<b>🔄 Szál visszaadva a Codex CLI-nek.</b>",
         "",
-        "Run this in your terminal:",
+        "Ezt futtasd a terminálban:",
         `<pre>${escapeHTML(resumeCommand)}</pre>`,
         copiedToClipboard ? "" : undefined,
-        copiedToClipboard ? "📋 <i>Command copied to clipboard!</i>" : undefined,
+        copiedToClipboard ? "📋 <i>Parancs vágólapra másolva!</i>" : undefined,
         "",
-        "Send any message here to start a new AttysCodexBridge thread.",
+        "Küldj ide bármilyen üzenetet egy új AttysCodexBridge szál indításához.",
       ]
         .filter((line): line is string => line !== undefined)
         .join("\n");
 
       await safeReply(ctx, html, { fallbackText: plainText });
     } catch (error) {
-      await safeReply(ctx, `<b>Failed:</b> ${escapeHTML(friendlyErrorText(error))}`, {
-        fallbackText: `Failed: ${friendlyErrorText(error)}`,
+      await safeReply(ctx, `<b>Nem sikerült:</b> ${escapeHTML(friendlyErrorText(error))}`, {
+        fallbackText: `Nem sikerült: ${friendlyErrorText(error)}`,
       });
     }
   });
@@ -1311,8 +1412,8 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
 
     const { contextKey, session } = contextSession;
     if (isBusy(contextKey)) {
-      await safeReply(ctx, escapeHTML("Cannot attach while a prompt is running."), {
-        fallbackText: "Cannot attach while a prompt is running.",
+      await safeReply(ctx, escapeHTML("Futó kérés közben nem lehet szálat csatolni."), {
+        fallbackText: "Futó kérés közben nem lehet szálat csatolni.",
       });
       return;
     }
@@ -1321,15 +1422,15 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
     const threadId = rawText.replace(/^\/attach(?:@\w+)?\s*/, "").trim();
 
     if (!threadId) {
-      await safeReply(ctx, escapeHTML("Usage: /attach <thread-id>"), {
-        fallbackText: "Usage: /attach <thread-id>",
+      await safeReply(ctx, escapeHTML("Használat: /attach <thread-id>"), {
+        fallbackText: "Használat: /attach <thread-id>",
       });
       return;
     }
 
     if (!getThread(threadId)) {
-      await safeReply(ctx, `<b>Failed:</b> ${escapeHTML(`Unknown Codex thread: ${threadId}`)}`, {
-        fallbackText: `Failed: Unknown Codex thread: ${threadId}`,
+      await safeReply(ctx, `<b>Nem sikerült:</b> ${escapeHTML(`Ismeretlen Codex szál: ${threadId}`)}`, {
+        fallbackText: `Nem sikerült: Ismeretlen Codex szál: ${threadId}`,
       });
       return;
     }
@@ -1339,12 +1440,12 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
     try {
       const info = await session.switchSession(threadId);
       updateSessionMetadata(contextKey, session);
-      const html = `<b>Attached to thread.</b>\n\n${renderSessionInfoHTML(info)}`;
-      const plain = `Attached to thread.\n\n${renderSessionInfoPlain(info)}`;
+      const html = `<b>Szál csatolva.</b>\n\n${renderSessionInfoHTML(config, info)}`;
+      const plain = `Szál csatolva.\n\n${renderSessionInfoPlain(config, info)}`;
       await safeReply(ctx, html, { fallbackText: plain });
     } catch (error) {
-      await safeReply(ctx, `<b>Failed:</b> ${escapeHTML(friendlyErrorText(error))}`, {
-        fallbackText: `Failed: ${friendlyErrorText(error)}`,
+      await safeReply(ctx, `<b>Nem sikerült:</b> ${escapeHTML(friendlyErrorText(error))}`, {
+        fallbackText: `Nem sikerült: ${friendlyErrorText(error)}`,
       });
     } finally {
       busyState.switching = false;
@@ -1364,8 +1465,8 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
 
     const { contextKey, session } = contextSession;
     if (isBusy(contextKey)) {
-      await safeReply(ctx, escapeHTML("Cannot switch sessions while a prompt is running."), {
-        fallbackText: "Cannot switch sessions while a prompt is running.",
+      await safeReply(ctx, escapeHTML("Futó kérés közben nem lehet szálat váltani."), {
+        fallbackText: "Futó kérés közben nem lehet szálat váltani.",
       });
       return;
     }
@@ -1379,12 +1480,12 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
       try {
         const info = await session.switchSession(threadId);
         updateSessionMetadata(contextKey, session);
-        const html = `<b>Switched thread.</b>\n\n${renderSessionInfoHTML(info)}`;
-        const plain = `Switched thread.\n\n${renderSessionInfoPlain(info)}`;
+        const html = `<b>Szál váltva.</b>\n\n${renderSessionInfoHTML(config, info)}`;
+        const plain = `Szál váltva.\n\n${renderSessionInfoPlain(config, info)}`;
         await safeReply(ctx, html, { fallbackText: plain });
       } catch (error) {
-        await safeReply(ctx, `<b>Failed:</b> ${escapeHTML(friendlyErrorText(error))}`, {
-          fallbackText: `Failed: ${friendlyErrorText(error)}`,
+        await safeReply(ctx, `<b>Nem sikerült:</b> ${escapeHTML(friendlyErrorText(error))}`, {
+          fallbackText: `Nem sikerült: ${friendlyErrorText(error)}`,
         });
       } finally {
         busyState.switching = false;
@@ -1394,8 +1495,8 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
 
     const sessions = session.listAllSessions(50);
     if (sessions.length === 0) {
-      await safeReply(ctx, escapeHTML("No recent threads found."), {
-        fallbackText: "No recent threads found.",
+      await safeReply(ctx, escapeHTML("Nem találtam friss szálat."), {
+        fallbackText: "Nem találtam friss szálat.",
       });
       return;
     }
@@ -1437,8 +1538,8 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
     pendingSessionButtons.set(contextKey, sessionButtons);
     const keyboard = paginateKeyboard(sessionButtons, 0, "sess");
 
-    await safeReply(ctx, `<b>Recent threads</b> (${orderedSessions.length}):\nTap to switch.`, {
-      fallbackText: `Recent threads (${orderedSessions.length}):\nTap to switch.`,
+    await safeReply(ctx, `<b>Friss szálak</b> (${orderedSessions.length}):\nKoppints a váltáshoz.`, {
+      fallbackText: `Friss szálak (${orderedSessions.length}):\nKoppints a váltáshoz.`,
       replyMarkup: keyboard,
     });
   });
@@ -1456,21 +1557,21 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
 
     const { contextKey, session } = contextSession;
     if (isBusy(contextKey)) {
-      await safeReply(ctx, escapeHTML("Cannot change model while a prompt is running."), {
-        fallbackText: "Cannot change model while a prompt is running.",
+      await safeReply(ctx, escapeHTML("Futó kérés közben nem lehet modellt váltani."), {
+        fallbackText: "Futó kérés közben nem lehet modellt váltani.",
       });
       return;
     }
 
     const models = session.listModels();
     if (models.length === 0) {
-      await safeReply(ctx, escapeHTML("No models available."), {
-        fallbackText: "No models available.",
+      await safeReply(ctx, escapeHTML("Nincs elérhető modell."), {
+        fallbackText: "Nincs elérhető modell.",
       });
       return;
     }
 
-    const currentModel = session.getInfo().model ?? "(default)";
+    const currentModel = session.getInfo().model ?? "(alapértelmezett)";
     const modelButtons = models.map((model) => ({
       label: `${model.displayName}${model.slug === currentModel ? " ✓" : ""}`,
       callbackData: `model_${model.slug}`,
@@ -1480,9 +1581,9 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
 
     await safeReply(
       ctx,
-      [`<b>Current model:</b> <code>${escapeHTML(currentModel)}</code>`, "", "Select a model for new threads:"].join("\n"),
+      [`<b>Aktuális modell:</b> <code>${escapeHTML(currentModel)}</code>`, "", "Válassz modellt az új szálakhoz:"].join("\n"),
       {
-        fallbackText: [`Current model: ${currentModel}`, "", "Select a model for new threads:"].join("\n"),
+        fallbackText: [`Aktuális modell: ${currentModel}`, "", "Válassz modellt az új szálakhoz:"].join("\n"),
         replyMarkup: keyboard,
       },
     );
@@ -1509,8 +1610,8 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
     pendingEffortButtons.set(contextKey, effortButtons);
     const keyboard = paginateKeyboard(effortButtons, 0, "effort");
     const text = current
-      ? `<b>Reasoning effort:</b> <code>${escapeHTML(current)}</code>\n\nSelect for new threads:`
-      : "<b>Reasoning effort:</b> not set (model default)\n\nSelect for new threads:";
+      ? `<b>Reasoning effort:</b> <code>${escapeHTML(current)}</code>\n\nVálassz értéket az új szálakhoz:`
+      : "<b>Reasoning effort:</b> nincs beállítva (modell alapértéke)\n\nVálassz értéket az új szálakhoz:";
     await safeReply(ctx, text, {
       fallbackText: text.replace(/<[^>]+>/g, ""),
       replyMarkup: keyboard,
@@ -1520,17 +1621,17 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
   bot.callbackQuery(NOOP_PAGE_CALLBACK_DATA, async (ctx) => {
     await ctx.answerCallbackQuery();
   });
-  handlePageCallback(/^sess_page_(\d+)$/, "sess", pendingSessionButtons, "Expired, run /sessions again");
-  handlePageCallback(/^ws_page_(\d+)$/, "ws", pendingWorkspaceButtons, "Expired, run /new again");
-  handlePageCallback(/^proj_page_(\d+)$/, "proj", pendingProjectWorkspaceButtons, "Expired, run /projekts again");
+  handlePageCallback(/^sess_page_(\d+)$/, "sess", pendingSessionButtons, "Lejárt, futtasd újra: /sessions");
+  handlePageCallback(/^ws_page_(\d+)$/, "ws", pendingWorkspaceButtons, "Lejárt, futtasd újra: /new");
+  handlePageCallback(/^proj_page_(\d+)$/, "proj", pendingProjectWorkspaceButtons, "Lejárt, futtasd újra: /projekts");
   handlePageCallback(
     /^launch_page_(\d+)$/,
     "launch",
     pendingLaunchButtons,
-    `Expired, run ${LAUNCH_PROFILES_COMMAND} again`,
+    `Lejárt, futtasd újra: ${LAUNCH_PROFILES_COMMAND}`,
   );
-  handlePageCallback(/^model_page_(\d+)$/, "model", pendingModelButtons, "Expired, run /model again");
-  handlePageCallback(/^effort_page_(\d+)$/, "effort", pendingEffortButtons, "Expired, run /effort again");
+  handlePageCallback(/^model_page_(\d+)$/, "model", pendingModelButtons, "Lejárt, futtasd újra: /model");
+  handlePageCallback(/^effort_page_(\d+)$/, "effort", pendingEffortButtons, "Lejárt, futtasd újra: /effort");
 
   bot.callbackQuery(/^codex_abort:(.+)$/, async (ctx) => {
     const contextKey = ctx.match?.[1];
@@ -1541,11 +1642,11 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
 
     const session = registry.get(contextKey);
     if (!session) {
-      await ctx.answerCallbackQuery({ text: "Nothing to abort" });
+      await ctx.answerCallbackQuery({ text: "Nincs mit megszakítani" });
       return;
     }
 
-    await ctx.answerCallbackQuery({ text: "Aborting..." });
+    await ctx.answerCallbackQuery({ text: "Megszakítás..." });
     await session.abort();
   });
 
@@ -1567,16 +1668,16 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
     const threadIds = pendingSessionPicks.get(contextKey);
     const threadId = threadIds?.[index];
     if (!threadId) {
-      await ctx.answerCallbackQuery({ text: "Session expired, run /sessions again" });
+      await ctx.answerCallbackQuery({ text: "A szállista lejárt, futtasd újra: /sessions" });
       return;
     }
 
     if (isBusy(contextKey)) {
-      await ctx.answerCallbackQuery({ text: "Wait for the current prompt to finish" });
+      await ctx.answerCallbackQuery({ text: "Várd meg a futó kérést" });
       return;
     }
 
-    await ctx.answerCallbackQuery({ text: "Switching..." });
+    await ctx.answerCallbackQuery({ text: "Váltás..." });
     pendingSessionPicks.delete(contextKey);
     pendingSessionButtons.delete(contextKey);
 
@@ -1585,8 +1686,8 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
     try {
       const info = await session.switchSession(threadId);
       updateSessionMetadata(contextKey, session);
-      const plainText = `Switched session.\n\n${renderSessionInfoPlain(info)}`;
-      const html = `<b>Switched session.</b>\n\n${renderSessionInfoHTML(info)}`;
+      const plainText = `Szál váltva.\n\n${renderSessionInfoPlain(config, info)}`;
+      const html = `<b>Szál váltva.</b>\n\n${renderSessionInfoHTML(config, info)}`;
 
       if (messageId) {
         await safeEditMessage(bot, chatId, messageId, html, { fallbackText: plainText });
@@ -1594,8 +1695,8 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
         await safeReply(ctx, html, { fallbackText: plainText });
       }
     } catch (error) {
-      const errHtml = `<b>Failed:</b> ${escapeHTML(friendlyErrorText(error))}`;
-      const errPlain = `Failed: ${friendlyErrorText(error)}`;
+      const errHtml = `<b>Nem sikerült:</b> ${escapeHTML(friendlyErrorText(error))}`;
+      const errPlain = `Nem sikerült: ${friendlyErrorText(error)}`;
       if (messageId) {
         await safeEditMessage(bot, chatId, messageId, errHtml, { fallbackText: errPlain });
       } else {
@@ -1624,16 +1725,16 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
     const workspaces = pendingWorkspacePicks.get(contextKey);
     const workspace = workspaces?.[index];
     if (!workspace) {
-      await ctx.answerCallbackQuery({ text: "Expired, run /new again" });
+      await ctx.answerCallbackQuery({ text: "Lejárt, futtasd újra: /new" });
       return;
     }
 
     if (isBusy(contextKey)) {
-      await ctx.answerCallbackQuery({ text: "Wait for the current prompt to finish" });
+      await ctx.answerCallbackQuery({ text: "Várd meg a futó kérést" });
       return;
     }
 
-    await ctx.answerCallbackQuery({ text: "Creating thread..." });
+    await ctx.answerCallbackQuery({ text: "Szál létrehozása..." });
     pendingWorkspacePicks.delete(contextKey);
     pendingWorkspaceButtons.delete(contextKey);
 
@@ -1642,9 +1743,9 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
     try {
       const info = await session.newThread(workspace);
       updateSessionMetadata(contextKey, session);
-      const label = isTopicContext(contextKey) ? "New thread created for this topic." : "New thread created.";
-      const plainText = `${label}\n\n${renderSessionInfoPlain(info)}`;
-      const html = `<b>${escapeHTML(label)}</b>\n\n${renderSessionInfoHTML(info)}`;
+      const label = isTopicContext(contextKey) ? "Új szál létrehozva ehhez a témához." : "Új szál létrehozva.";
+      const plainText = `${label}\n\n${renderSessionInfoPlain(config, info)}`;
+      const html = `<b>${escapeHTML(label)}</b>\n\n${renderSessionInfoHTML(config, info)}`;
 
       if (messageId) {
         await safeEditMessage(bot, chatId, messageId, html, { fallbackText: plainText });
@@ -1652,8 +1753,8 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
         await safeReply(ctx, html, { fallbackText: plainText });
       }
     } catch (error) {
-      const errHtml = `<b>Failed:</b> ${escapeHTML(friendlyErrorText(error))}`;
-      const errPlain = `Failed: ${friendlyErrorText(error)}`;
+      const errHtml = `<b>Nem sikerült:</b> ${escapeHTML(friendlyErrorText(error))}`;
+      const errPlain = `Nem sikerült: ${friendlyErrorText(error)}`;
       if (messageId) {
         await safeEditMessage(bot, chatId, messageId, errHtml, { fallbackText: errPlain });
       } else {
@@ -1682,16 +1783,16 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
     const workspaces = pendingProjectWorkspacePicks.get(contextKey);
     const workspace = workspaces?.[index];
     if (!workspace) {
-      await ctx.answerCallbackQuery({ text: "Expired, run /projekts again" });
+      await ctx.answerCallbackQuery({ text: "Lejárt, futtasd újra: /projekts" });
       return;
     }
 
     if (isBusy(contextKey)) {
-      await ctx.answerCallbackQuery({ text: "Wait for the current prompt to finish" });
+      await ctx.answerCallbackQuery({ text: "Várd meg a futó kérést" });
       return;
     }
 
-    await ctx.answerCallbackQuery({ text: "Switching project..." });
+    await ctx.answerCallbackQuery({ text: "Projekt váltása..." });
     pendingProjectWorkspacePicks.delete(contextKey);
     pendingProjectWorkspaceButtons.delete(contextKey);
 
@@ -1701,11 +1802,11 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
       const info = await session.newThread(workspace);
       updateSessionMetadata(contextKey, session);
       const label = isTopicContext(contextKey)
-        ? "Active project changed for this topic."
-        : "Active project changed for this chat.";
+        ? "Az aktív projekt megváltozott ennél a témánál."
+        : "Az aktív projekt megváltozott ennél a chatnél.";
       const projectLabel = getWorkspaceShortName(workspace);
-      const plainText = `${label}\nProject: ${projectLabel}\n\n${renderSessionInfoPlain(info)}`;
-      const html = `<b>${escapeHTML(label)}</b>\nProject: <code>${escapeHTML(projectLabel)}</code>\n\n${renderSessionInfoHTML(info)}`;
+      const plainText = `${label}\nProjekt: ${projectLabel}\n\n${renderSessionInfoPlain(config, info)}`;
+      const html = `<b>${escapeHTML(label)}</b>\nProjekt: <code>${escapeHTML(projectLabel)}</code>\n\n${renderSessionInfoHTML(config, info)}`;
 
       if (messageId) {
         await safeEditMessage(bot, chatId, messageId, html, { fallbackText: plainText });
@@ -1713,8 +1814,8 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
         await safeReply(ctx, html, { fallbackText: plainText });
       }
     } catch (error) {
-      const errHtml = `<b>Failed:</b> ${escapeHTML(friendlyErrorText(error))}`;
-      const errPlain = `Failed: ${friendlyErrorText(error)}`;
+      const errHtml = `<b>Nem sikerült:</b> ${escapeHTML(friendlyErrorText(error))}`;
+      const errPlain = `Nem sikerült: ${friendlyErrorText(error)}`;
       if (messageId) {
         await safeEditMessage(bot, chatId, messageId, errHtml, { fallbackText: errPlain });
       } else {
@@ -1743,19 +1844,19 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
     const launchProfileIds = pendingLaunchPicks.get(contextKey);
     const profileId = launchProfileIds?.[index];
     if (!profileId) {
-      await ctx.answerCallbackQuery({ text: `Expired, run ${LAUNCH_PROFILES_COMMAND} again` });
+      await ctx.answerCallbackQuery({ text: `Lejárt, futtasd újra: ${LAUNCH_PROFILES_COMMAND}` });
       return;
     }
 
     if (isBusy(contextKey)) {
-      await ctx.answerCallbackQuery({ text: "Wait for the current prompt to finish" });
+      await ctx.answerCallbackQuery({ text: "Várd meg a futó kérést" });
       return;
     }
 
     const profile = findLaunchProfile(config.launchProfiles, profileId);
     if (!profile) {
       clearLaunchSelectionState(contextKey);
-      await ctx.answerCallbackQuery({ text: "Launch profile no longer exists" });
+      await ctx.answerCallbackQuery({ text: "Az indítási profil már nem létezik" });
       return;
     }
 
@@ -1764,24 +1865,24 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
       pendingLaunchPicks.delete(contextKey);
       pendingLaunchButtons.delete(contextKey);
 
-      await ctx.answerCallbackQuery({ text: "Confirm danger-full-access" });
+      await ctx.answerCallbackQuery({ text: "danger-full-access megerősítés szükséges" });
       const confirmKeyboard = new InlineKeyboard()
-        .text("Enable danger-full-access", `launchconfirm_yes:${profile.id}`)
+        .text("danger-full-access engedélyezése", `launchconfirm_yes:${profile.id}`)
         .row()
-        .text("Cancel", `launchconfirm_no:${profile.id}`);
+        .text("Mégse", `launchconfirm_no:${profile.id}`);
       const html = [
-        `<b>Confirm launch profile:</b> <code>${escapeHTML(profile.label)}</code>`,
-        `<b>Behavior:</b> <code>${escapeHTML(formatLaunchProfileBehavior(profile))}</code>`,
+        `<b>Indítási profil megerősítése:</b> <code>${escapeHTML(profile.label)}</code>`,
+        `<b>Működés:</b> <code>${escapeHTML(formatLaunchProfileBehavior(profile))}</code>`,
         "",
-        "⚠️ <b>This profile uses danger-full-access.</b>",
-        "It will apply to new or reattached threads in this Telegram context.",
+        "⚠️ <b>Ez a profil danger-full-access módot használ.</b>",
+        "Az új vagy újracsatolt szálakra fog érvényesülni ebben a Telegram kontextusban.",
       ].join("\n");
       const plain = [
-        `Confirm launch profile: ${profile.label}`,
-        `Behavior: ${formatLaunchProfileBehavior(profile)}`,
+        `Indítási profil megerősítése: ${profile.label}`,
+        `Működés: ${formatLaunchProfileBehavior(profile)}`,
         "",
-        "WARNING: This profile uses danger-full-access.",
-        "It will apply to new or reattached threads in this Telegram context.",
+        "FIGYELEM: Ez a profil danger-full-access módot használ.",
+        "Az új vagy újracsatolt szálakra fog érvényesülni ebben a Telegram kontextusban.",
       ].join("\n");
 
       if (messageId) {
@@ -1798,22 +1899,22 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
       return;
     }
 
-    await ctx.answerCallbackQuery({ text: `Launch set to ${profile.label}` });
+    await ctx.answerCallbackQuery({ text: `Indítási profil beállítva: ${profile.label}` });
     clearLaunchSelectionState(contextKey);
     const selectedProfile = session.setLaunchProfile(profile.id);
     updateSessionMetadata(contextKey, session);
 
     const html = [
-      `<b>Launch profile set to</b> <code>${escapeHTML(selectedProfile.label)}</code>`,
-      `<b>Behavior:</b> <code>${escapeHTML(formatLaunchProfileBehavior(selectedProfile))}</code>`,
+      `<b>Indítási profil beállítva:</b> <code>${escapeHTML(selectedProfile.label)}</code>`,
+      `<b>Működés:</b> <code>${escapeHTML(formatLaunchProfileBehavior(selectedProfile))}</code>`,
       "",
-      "Applies to new or reattached threads.",
+      "Az új vagy újracsatolt szálakra érvényes.",
     ].join("\n");
     const plain = [
-      `Launch profile set to ${selectedProfile.label}`,
-      `Behavior: ${formatLaunchProfileBehavior(selectedProfile)}`,
+      `Indítási profil beállítva: ${selectedProfile.label}`,
+      `Működés: ${formatLaunchProfileBehavior(selectedProfile)}`,
       "",
-      "Applies to new or reattached threads.",
+      "Az új vagy újracsatolt szálakra érvényes.",
     ].join("\n");
 
     if (messageId) {
@@ -1841,41 +1942,41 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
     const { contextKey, session } = contextSession;
     const profileId = pendingUnsafeLaunchConfirmations.get(contextKey);
     if (!profileId || profileId !== confirmedProfileId) {
-      await ctx.answerCallbackQuery({ text: `Expired, run ${LAUNCH_PROFILES_COMMAND} again` });
+      await ctx.answerCallbackQuery({ text: `Lejárt, futtasd újra: ${LAUNCH_PROFILES_COMMAND}` });
       return;
     }
 
     if (action === "no") {
       clearLaunchSelectionState(contextKey);
-      await ctx.answerCallbackQuery({ text: "Cancelled" });
+      await ctx.answerCallbackQuery({ text: "Mégsem" });
       await safeEditMessage(
         bot,
         chatId,
         messageId,
-        `<b>Launch change cancelled.</b>\n\nRun ${LAUNCH_PROFILES_COMMAND} again to pick another profile.`,
+        `<b>Indítási profil váltása megszakítva.</b>\n\nMásik profil választásához futtasd újra: ${LAUNCH_PROFILES_COMMAND}`,
         {
-          fallbackText: `Launch change cancelled.\n\nRun ${LAUNCH_PROFILES_COMMAND} again to pick another profile.`,
+          fallbackText: `Indítási profil váltása megszakítva.\n\nMásik profil választásához futtasd újra: ${LAUNCH_PROFILES_COMMAND}`,
         },
       );
       return;
     }
 
     if (isBusy(contextKey)) {
-      await ctx.answerCallbackQuery({ text: "Wait for the current prompt to finish" });
+      await ctx.answerCallbackQuery({ text: "Várd meg a futó kérést" });
       return;
     }
 
     const profile = findLaunchProfile(config.launchProfiles, profileId);
     if (!profile) {
       clearLaunchSelectionState(contextKey);
-      await ctx.answerCallbackQuery({ text: "Launch profile no longer exists" });
+      await ctx.answerCallbackQuery({ text: "Az indítási profil már nem létezik" });
       await safeEditMessage(
         bot,
         chatId,
         messageId,
-        `<b>Launch profile expired.</b>\n\nRun ${LAUNCH_PROFILES_COMMAND} again.`,
+        `<b>Az indítási profil lejárt.</b>\n\nFuttasd újra: ${LAUNCH_PROFILES_COMMAND}`,
         {
-          fallbackText: `Launch profile expired.\n\nRun ${LAUNCH_PROFILES_COMMAND} again.`,
+          fallbackText: `Az indítási profil lejárt.\n\nFuttasd újra: ${LAUNCH_PROFILES_COMMAND}`,
         },
       );
       return;
@@ -1884,19 +1985,19 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
     clearLaunchSelectionState(contextKey);
     const selectedProfile = session.setLaunchProfile(profile.id);
     updateSessionMetadata(contextKey, session);
-    await ctx.answerCallbackQuery({ text: `Launch set to ${selectedProfile.label}` });
+    await ctx.answerCallbackQuery({ text: `Indítási profil beállítva: ${selectedProfile.label}` });
 
     const html = [
-      `<b>Launch profile set to</b> <code>${escapeHTML(selectedProfile.label)}</code>`,
-      `<b>Behavior:</b> <code>${escapeHTML(formatLaunchProfileBehavior(selectedProfile))}</code>`,
+      `<b>Indítási profil beállítva:</b> <code>${escapeHTML(selectedProfile.label)}</code>`,
+      `<b>Működés:</b> <code>${escapeHTML(formatLaunchProfileBehavior(selectedProfile))}</code>`,
       "",
-      "⚠️ <i>danger-full-access confirmed for new or reattached threads.</i>",
+      "⚠️ <i>danger-full-access megerősítve az új vagy újracsatolt szálakhoz.</i>",
     ].join("\n");
     const plain = [
-      `Launch profile set to ${selectedProfile.label}`,
-      `Behavior: ${formatLaunchProfileBehavior(selectedProfile)}`,
+      `Indítási profil beállítva: ${selectedProfile.label}`,
+      `Működés: ${formatLaunchProfileBehavior(selectedProfile)}`,
       "",
-      "danger-full-access confirmed for new or reattached threads.",
+      "danger-full-access megerősítve az új vagy újracsatolt szálakhoz.",
     ].join("\n");
 
     await safeEditMessage(bot, chatId, messageId, html, { fallbackText: plain });
@@ -1919,29 +2020,29 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
     const { contextKey, session } = contextSession;
     const buttons = pendingModelButtons.get(contextKey);
     if (!buttons) {
-      await ctx.answerCallbackQuery({ text: "Expired, run /model again" });
+      await ctx.answerCallbackQuery({ text: "Lejárt, futtasd újra: /model" });
       return;
     }
 
     const modelExists = buttons.some((button) => button.callbackData === `model_${slug}`);
     if (!modelExists) {
-      await ctx.answerCallbackQuery({ text: "Expired, run /model again" });
+      await ctx.answerCallbackQuery({ text: "Lejárt, futtasd újra: /model" });
       return;
     }
 
     if (isBusy(contextKey)) {
-      await ctx.answerCallbackQuery({ text: "Wait for the current prompt to finish" });
+      await ctx.answerCallbackQuery({ text: "Várd meg a futó kérést" });
       return;
     }
 
-    await ctx.answerCallbackQuery({ text: "Setting model..." });
+    await ctx.answerCallbackQuery({ text: "Modell beállítása..." });
     pendingModelButtons.delete(contextKey);
 
     try {
       const model = session.setModel(slug);
       updateSessionMetadata(contextKey, session);
-      const html = `<b>Model set to</b> <code>${escapeHTML(model)}</code> — applies to new threads.`;
-      const plainText = `Model set to ${model} — applies to new threads.`;
+      const html = `<b>Modell beállítva:</b> <code>${escapeHTML(model)}</code> — az új szálakra érvényes.`;
+      const plainText = `Modell beállítva: ${model} — az új szálakra érvényes.`;
 
       if (messageId) {
         await safeEditMessage(bot, chatId, messageId, html, { fallbackText: plainText });
@@ -1949,8 +2050,8 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
         await safeReply(ctx, html, { fallbackText: plainText });
       }
     } catch (error) {
-      const errHtml = `<b>Failed:</b> ${escapeHTML(friendlyErrorText(error))}`;
-      const errPlain = `Failed: ${friendlyErrorText(error)}`;
+      const errHtml = `<b>Nem sikerült:</b> ${escapeHTML(friendlyErrorText(error))}`;
+      const errPlain = `Nem sikerült: ${friendlyErrorText(error)}`;
       if (messageId) {
         await safeEditMessage(bot, chatId, messageId, errHtml, { fallbackText: errPlain });
       } else {
@@ -1976,17 +2077,17 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
     const { contextKey, session } = contextSession;
     const buttons = pendingEffortButtons.get(contextKey);
     if (!buttons || !buttons.some((button) => button.callbackData === `effort_${effort}`)) {
-      await ctx.answerCallbackQuery({ text: "Expired, run /effort again" });
+      await ctx.answerCallbackQuery({ text: "Lejárt, futtasd újra: /effort" });
       return;
     }
 
-    await ctx.answerCallbackQuery({ text: `Effort set to ${effort}` });
+    await ctx.answerCallbackQuery({ text: `Effort beállítva: ${effort}` });
     pendingEffortButtons.delete(contextKey);
     session.setReasoningEffort(effort);
     updateSessionMetadata(contextKey, session);
-    const html = `⚡ Reasoning effort set to <code>${escapeHTML(effort)}</code> — applies to new threads.`;
+    const html = `⚡ Reasoning effort beállítva: <code>${escapeHTML(effort)}</code> — az új szálakra érvényes.`;
     await safeEditMessage(bot, chatId, messageId, html, {
-      fallbackText: `⚡ Reasoning effort set to ${effort} — applies to new threads.`,
+      fallbackText: `⚡ Reasoning effort beállítva: ${effort} — az új szálakra érvényes.`,
     });
   });
 
@@ -2042,8 +2143,8 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
       const result = await transcribeAudio(tempFilePath);
       transcript = result.text.trim();
       if (!transcript) {
-        await safeReply(ctx, escapeHTML("Transcription was empty. Please try again or send text instead."), {
-          fallbackText: "Transcription was empty. Please try again or send text instead.",
+        await safeReply(ctx, escapeHTML("Az átírás üres lett. Próbáld újra, vagy küldj inkább szöveget."), {
+          fallbackText: "Az átírás üres lett. Próbáld újra, vagy küldj inkább szöveget.",
         });
         return;
       }
@@ -2051,13 +2152,13 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
       const preview = trimLine(transcript.replace(/\s+/g, " "), 100);
       await safeReply(
         ctx,
-        `🎙️ <b>Transcribed:</b> ${escapeHTML(preview)} <i>(via ${escapeHTML(result.backend)})</i>`,
-        { fallbackText: `🎙️ Transcribed: ${preview} (via ${result.backend})` },
+        `🎙️ <b>Átírva:</b> ${escapeHTML(preview)} <i>(${escapeHTML(result.backend)})</i>`,
+        { fallbackText: `🎙️ Átírva: ${preview} (${result.backend})` },
       );
     } catch (error) {
-      const note = "Note: voice transcription uses OPENAI_API_KEY, not CODEX_API_KEY.";
-      await safeReply(ctx, `<b>Transcription failed:</b>\n${escapeHTML(friendlyErrorText(error))}\n\n<i>${escapeHTML(note)}</i>`, {
-        fallbackText: `Transcription failed:\n${friendlyErrorText(error)}\n\n${note}`,
+      const note = "Megjegyzés: a hangfelismerés OPENAI_API_KEY-t használ, nem CODEX_API_KEY-t.";
+      await safeReply(ctx, `<b>Az átírás nem sikerült:</b>\n${escapeHTML(friendlyErrorText(error))}\n\n<i>${escapeHTML(note)}</i>`, {
+        fallbackText: `Az átírás nem sikerült:\n${friendlyErrorText(error)}\n\n${note}`,
       });
       return;
     } finally {
@@ -2108,8 +2209,8 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
       await ctx.api.sendChatAction(chatId, "upload_photo");
       tempFilePath = await downloadTelegramFile(ctx.api, config.telegramBotToken, photo.file_id, 20 * 1024 * 1024);
     } catch (error) {
-      await safeReply(ctx, `<b>Failed to download photo:</b> ${escapeHTML(friendlyErrorText(error))}`, {
-        fallbackText: `Failed to download photo: ${friendlyErrorText(error)}`,
+      await safeReply(ctx, `<b>Nem sikerült letölteni a fotót:</b> ${escapeHTML(friendlyErrorText(error))}`, {
+        fallbackText: `Nem sikerült letölteni a fotót: ${friendlyErrorText(error)}`,
       });
       return;
     } finally {
@@ -2157,8 +2258,8 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
     if (doc.file_size && doc.file_size > config.maxFileSize) {
       const sizeMB = Math.round(doc.file_size / 1024 / 1024);
       const maxMB = Math.round(config.maxFileSize / 1024 / 1024);
-      await safeReply(ctx, `<b>File too large</b> (${sizeMB} MB, max ${maxMB} MB)`, {
-        fallbackText: `File too large (${sizeMB} MB, max ${maxMB} MB)`,
+      await safeReply(ctx, `<b>Túl nagy fájl</b> (${sizeMB} MB, max ${maxMB} MB)`, {
+        fallbackText: `Túl nagy fájl (${sizeMB} MB, max ${maxMB} MB)`,
       });
       return;
     }
@@ -2171,8 +2272,8 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
       await ctx.api.sendChatAction(chatId, "typing");
       tempFilePath = await downloadTelegramFile(ctx.api, config.telegramBotToken, doc.file_id, config.maxFileSize);
     } catch (error) {
-      await safeReply(ctx, `<b>Failed to download file:</b> ${escapeHTML(friendlyErrorText(error))}`, {
-        fallbackText: `Failed to download file: ${friendlyErrorText(error)}`,
+      await safeReply(ctx, `<b>Nem sikerült letölteni a fájlt:</b> ${escapeHTML(friendlyErrorText(error))}`, {
+        fallbackText: `Nem sikerült letölteni a fájlt: ${friendlyErrorText(error)}`,
       });
       return;
     } finally {
@@ -2193,8 +2294,8 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
         maxFileSize: config.maxFileSize,
       });
     } catch (error) {
-      await safeReply(ctx, `<b>Failed to stage file:</b> ${escapeHTML(friendlyErrorText(error))}`, {
-        fallbackText: `Failed to stage file: ${friendlyErrorText(error)}`,
+      await safeReply(ctx, `<b>Nem sikerült előkészíteni a fájlt:</b> ${escapeHTML(friendlyErrorText(error))}`, {
+        fallbackText: `Nem sikerült előkészíteni a fájlt: ${friendlyErrorText(error)}`,
       });
       return;
     } finally {
@@ -2203,8 +2304,8 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
       }
     }
 
-    await safeReply(ctx, `📎 <b>Received:</b> <code>${escapeHTML(stagedFile.safeName)}</code>`, {
-      fallbackText: `📎 Received: ${stagedFile.safeName}`,
+    await safeReply(ctx, `📎 <b>Megérkezett:</b> <code>${escapeHTML(stagedFile.safeName)}</code>`, {
+      fallbackText: `📎 Megérkezett: ${stagedFile.safeName}`,
     });
 
     // Keep typing visible during the gap between staging and prompt execution
@@ -2250,36 +2351,46 @@ export function createBot(config: TeleCodexConfig, registry: SessionRegistry): B
 
 export async function registerCommands(bot: Bot<Context>): Promise<void> {
   await bot.api.setMyCommands([
-    { command: "start", description: "Welcome & status" },
-    { command: "help", description: "Command reference" },
-    { command: "new", description: "Start a new thread" },
-    { command: "projekts", description: "Pick project for this chat" },
-    { command: "session", description: "Current thread details" },
-    { command: "sessions", description: "Browse & switch threads" },
-    { command: "retry", description: "Resend the last prompt" },
-    { command: "abort", description: "Cancel current operation" },
-    { command: "launch_profiles", description: "Select launch profile" },
-    { command: "model", description: "View & change model" },
-    { command: "effort", description: "Set reasoning effort" },
-    { command: "auth", description: "Check auth status" },
-    { command: "login", description: "Start authentication" },
-    { command: "logout", description: "Sign out" },
-    { command: "voice", description: "Voice transcription status" },
-    { command: "handback", description: "Hand thread to Codex CLI" },
-    { command: "attach", description: "Bind a Codex thread to this topic" },
-    { command: "switch", description: "Switch to a thread by ID" },
+    { command: "start", description: "Üdvözlés és állapot" },
+    { command: "help", description: "Parancslista" },
+    { command: "new", description: "Új szál indítása" },
+    { command: "projekts", description: "Projekt választása ehhez a chathez" },
+    { command: "session", description: "Aktuális szál adatai" },
+    { command: "sessions", description: "Szálak böngészése és váltása" },
+    { command: "retry", description: "Utolsó kérés újraküldése" },
+    { command: "abort", description: "Futó művelet megszakítása" },
+    { command: "launch_profiles", description: "Indítási profil kiválasztása" },
+    { command: "model", description: "Modell megtekintése és váltása" },
+    { command: "effort", description: "Reasoning effort beállítása" },
+    { command: "auth", description: "Hitelesítési állapot" },
+    { command: "login", description: "Bejelentkezés indítása" },
+    { command: "logout", description: "Kijelentkezés" },
+    { command: "voice", description: "Hangfelismerés állapota" },
+    { command: "watchdog", description: "Bridge állapotkép" },
+    { command: "handback", description: "Szál visszaadása Codex CLI-nek" },
+    { command: "attach", description: "Codex szál csatolása ehhez a témához" },
+    { command: "switch", description: "Váltás thread ID alapján" },
   ]);
 }
 
-function renderSessionInfoPlain(info: CodexSessionInfo): string {
+function renderHostInfoPlain(config: TeleCodexConfig): string {
+  return `Host: ${config.hostLabel} (${config.hostName}\\${config.userName})`;
+}
+
+function renderHostInfoHTML(config: TeleCodexConfig): string {
+  return `<b>Host:</b> <code>${escapeHTML(config.hostLabel)}</code> <code>(${escapeHTML(`${config.hostName}\\${config.userName}`)})</code>`;
+}
+
+function renderSessionInfoPlain(config: TeleCodexConfig, info: CodexSessionInfo): string {
   return [
-    `Thread ID: ${info.threadId ?? "(not started yet)"}`,
+    renderHostInfoPlain(config),
+    `Thread ID: ${info.threadId ?? "(még nincs elindítva)"}`,
     `Workspace: ${info.workspace}`,
-    `Launch profile: ${info.launchProfileLabel} (${info.launchProfileBehavior})${info.unsafeLaunch ? " [unsafe]" : ""}`,
+    `Indítási profil: ${info.launchProfileLabel} (${info.launchProfileBehavior})${info.unsafeLaunch ? " [unsafe]" : ""}`,
     info.nextLaunchProfileId
-      ? `Next launch profile: ${info.nextLaunchProfileLabel} (${info.nextLaunchProfileBehavior})${info.nextUnsafeLaunch ? " [unsafe]" : ""}`
+      ? `Következő indítási profil: ${info.nextLaunchProfileLabel} (${info.nextLaunchProfileBehavior})${info.nextUnsafeLaunch ? " [unsafe]" : ""}`
       : undefined,
-    info.model ? `Model: ${info.model}` : undefined,
+    info.model ? `Modell: ${info.model}` : undefined,
     info.reasoningEffort ? `Reasoning effort: ${info.reasoningEffort}` : undefined,
     info.sessionTokens ? formatSessionTokensPlain(info.sessionTokens) : undefined,
   ]
@@ -2287,36 +2398,37 @@ function renderSessionInfoPlain(info: CodexSessionInfo): string {
     .join("\n");
 }
 
-function renderSessionInfoHTML(info: CodexSessionInfo): string {
+function renderSessionInfoHTML(config: TeleCodexConfig, info: CodexSessionInfo): string {
   return [
-    `<b>Thread ID:</b> <code>${escapeHTML(info.threadId ?? "(not started yet)")}</code>`,
+    renderHostInfoHTML(config),
+    `<b>Thread ID:</b> <code>${escapeHTML(info.threadId ?? "(még nincs elindítva)")}</code>`,
     `<b>Workspace:</b> <code>${escapeHTML(info.workspace)}</code>`,
-    `<b>Launch profile:</b> <code>${escapeHTML(info.launchProfileLabel)}</code>`,
-    `<b>Launch behavior:</b> <code>${escapeHTML(info.launchProfileBehavior)}</code>${info.unsafeLaunch ? " ⚠️" : ""}`,
+    `<b>Indítási profil:</b> <code>${escapeHTML(info.launchProfileLabel)}</code>`,
+    `<b>Indítási működés:</b> <code>${escapeHTML(info.launchProfileBehavior)}</code>${info.unsafeLaunch ? " ⚠️" : ""}`,
     info.nextLaunchProfileId
-      ? `<b>Next launch profile:</b> <code>${escapeHTML(info.nextLaunchProfileLabel ?? "")}</code> <i>(${escapeHTML(info.nextLaunchProfileBehavior ?? "")})</i>${info.nextUnsafeLaunch ? " ⚠️" : ""}`
+      ? `<b>Következő indítási profil:</b> <code>${escapeHTML(info.nextLaunchProfileLabel ?? "")}</code> <i>(${escapeHTML(info.nextLaunchProfileBehavior ?? "")})</i>${info.nextUnsafeLaunch ? " ⚠️" : ""}`
       : undefined,
-    info.model ? `<b>Model:</b> <code>${escapeHTML(info.model)}</code>` : undefined,
+    info.model ? `<b>Modell:</b> <code>${escapeHTML(info.model)}</code>` : undefined,
     info.reasoningEffort ? `<b>Reasoning effort:</b> <code>${escapeHTML(info.reasoningEffort)}</code>` : undefined,
-    info.sessionTokens ? `<b>Session tokens:</b> <code>${escapeHTML(formatSessionTokensValue(info.sessionTokens))}</code>` : undefined,
+    info.sessionTokens ? `<b>Session tokenek:</b> <code>${escapeHTML(formatSessionTokensValue(info.sessionTokens))}</code>` : undefined,
   ]
     .filter((line): line is string => Boolean(line))
     .join("\n");
 }
 
 function renderLaunchSummaryPlain(info: CodexSessionInfo): string {
-  return `Launch: ${info.launchProfileLabel} (${info.launchProfileBehavior})${info.unsafeLaunch ? " [unsafe]" : ""}`;
+  return `Indítás: ${info.launchProfileLabel} (${info.launchProfileBehavior})${info.unsafeLaunch ? " [unsafe]" : ""}`;
 }
 
 function renderLaunchSummaryHTML(info: CodexSessionInfo): string {
   const suffix = info.unsafeLaunch ? " ⚠️" : "";
-  return `<b>Launch:</b> <code>${escapeHTML(info.launchProfileLabel)}</code> <i>(${escapeHTML(info.launchProfileBehavior)})</i>${suffix}`;
+  return `<b>Indítás:</b> <code>${escapeHTML(info.launchProfileLabel)}</code> <i>(${escapeHTML(info.launchProfileBehavior)})</i>${suffix}`;
 }
 
 function renderToolStartMessage(toolName: string): RenderedText {
   return {
-    text: `<b>🔧 Running:</b> <code>${escapeHTML(toolName)}</code>`,
-    fallbackText: `🔧 Running: ${toolName}`,
+    text: `<b>🔧 Fut:</b> <code>${escapeHTML(toolName)}</code>`,
+    fallbackText: `🔧 Fut: ${toolName}`,
     parseMode: "HTML",
   };
 }
@@ -2357,7 +2469,7 @@ export function formatToolSummaryLine(toolCounts: Map<string, number>): string {
   const tools = entries
     .map(([name, count]) => formatSummaryEntry(name, count))
     .join(", ");
-  return `Tools used: ${tools}`;
+  return `Használt eszközök: ${tools}`;
 }
 
 function renderTodoList(items: Array<{ text: string; completed: boolean }>): string {
@@ -2365,7 +2477,7 @@ function renderTodoList(items: Array<{ text: string; completed: boolean }>): str
     const icon = item.completed ? "✅" : "⬜";
     return `${icon} ${escapeHTML(item.text)}`;
   });
-  return `📋 <b>Plan</b>\n${lines.join("\n")}`;
+  return `📋 <b>Terv</b>\n${lines.join("\n")}`;
 }
 
 export function formatTurnUsageLine(usage: { inputTokens: number; cachedInputTokens: number; outputTokens: number }): string {
@@ -2412,7 +2524,7 @@ function formatSessionTokensValue(tokens: { input: number; cached: number; outpu
 }
 
 function formatSessionTokensPlain(tokens: { input: number; cached: number; output: number }): string {
-  return `Session tokens: ${formatSessionTokensValue(tokens)}`;
+  return `Session tokenek: ${formatSessionTokensValue(tokens)}`;
 }
 
 async function safeReply(ctx: Context, text: string, options: TextOptions = {}): Promise<void> {
@@ -2445,19 +2557,28 @@ async function sendTextMessage(
   options: TextOptions = {},
 ): Promise<{ message_id: number }> {
   const parseMode = Object.prototype.hasOwnProperty.call(options, "parseMode") ? options.parseMode : "HTML";
+  const timeoutMs = options.timeoutMs ?? resolveTelegramApiTimeoutMs();
 
   try {
-    return await api.sendMessage(chatId, text, {
-      ...(parseMode ? { parse_mode: parseMode } : {}),
-      ...(options.messageThreadId ? { message_thread_id: options.messageThreadId } : {}),
-      reply_markup: options.replyMarkup,
-    });
-  } catch (error) {
-    if (parseMode && options.fallbackText !== undefined && isTelegramParseError(error)) {
-      return await api.sendMessage(chatId, options.fallbackText, {
+    return await withTimeout(
+      api.sendMessage(chatId, text, {
+        ...(parseMode ? { parse_mode: parseMode } : {}),
         ...(options.messageThreadId ? { message_thread_id: options.messageThreadId } : {}),
         reply_markup: options.replyMarkup,
-      });
+      }),
+      timeoutMs,
+      "Telegram sendMessage timed out",
+    );
+  } catch (error) {
+    if (parseMode && options.fallbackText !== undefined && isTelegramParseError(error)) {
+      return await withTimeout(
+        api.sendMessage(chatId, options.fallbackText, {
+          ...(options.messageThreadId ? { message_thread_id: options.messageThreadId } : {}),
+          reply_markup: options.replyMarkup,
+        }),
+        timeoutMs,
+        "Telegram fallback sendMessage timed out",
+      );
     }
     throw error;
   }
@@ -2471,21 +2592,30 @@ async function safeEditMessage(
   options: TextOptions = {},
 ): Promise<void> {
   const parseMode = Object.prototype.hasOwnProperty.call(options, "parseMode") ? options.parseMode : "HTML";
+  const timeoutMs = options.timeoutMs ?? resolveTelegramApiTimeoutMs();
 
   try {
-    await bot.api.editMessageText(chatId, messageId, text, {
-      ...(parseMode ? { parse_mode: parseMode } : {}),
-      reply_markup: options.replyMarkup,
-    });
+    await withTimeout(
+      bot.api.editMessageText(chatId, messageId, text, {
+        ...(parseMode ? { parse_mode: parseMode } : {}),
+        reply_markup: options.replyMarkup,
+      }),
+      timeoutMs,
+      "Telegram editMessageText timed out",
+    );
   } catch (error) {
     if (isMessageNotModifiedError(error)) {
       return;
     }
 
     if (parseMode && options.fallbackText !== undefined && isTelegramParseError(error)) {
-      await bot.api.editMessageText(chatId, messageId, options.fallbackText, {
-        reply_markup: options.replyMarkup,
-      });
+      await withTimeout(
+        bot.api.editMessageText(chatId, messageId, options.fallbackText, {
+          reply_markup: options.replyMarkup,
+        }),
+        timeoutMs,
+        "Telegram fallback editMessageText timed out",
+      );
       return;
     }
 
@@ -2611,6 +2741,26 @@ function formatMarkdownMessage(markdown: string): RenderedText {
       parseMode: undefined,
     };
   }
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}
+
+function resolveTelegramApiTimeoutMs(): number {
+  const parsed = Number(process.env.TELEGRAM_API_TIMEOUT_MS);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : DEFAULT_TELEGRAM_API_TIMEOUT_MS;
 }
 
 function findPreferredSplitIndex(text: string, maxLength: number): number {

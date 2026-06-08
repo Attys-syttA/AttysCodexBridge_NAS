@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatSessionLabel,
   renderHelpMessage,
+  renderHelpTopicMessage,
   renderWelcomeFirstTime,
   renderWelcomeReturning,
 } from "../src/bot-ui.js";
@@ -11,10 +12,10 @@ describe("bot-ui", () => {
   describe("renderHelpMessage", () => {
     it("contains all command groups", () => {
       const { html, plain } = renderHelpMessage();
-      expect(html).toContain("Session");
-      expect(html).toContain("Model");
-      expect(html).toContain("Auth");
-      expect(html).toContain("Utility");
+      expect(html).toContain("Beszélgetés");
+      expect(html).toContain("Modell");
+      expect(html).toContain("Hitelesítés");
+      expect(html).toContain("Segédeszközök");
       expect(plain).toContain("/new");
       expect(plain).toContain("/projekts");
       expect(plain).toContain("/help");
@@ -22,10 +23,10 @@ describe("bot-ui", () => {
       expect(plain).toContain("/launch_profiles");
     });
 
-    it("lists all 17 commands", () => {
+    it("lists all 18 commands", () => {
       const { plain } = renderHelpMessage();
       const commandMatches = plain.match(/\/\w+/g) ?? [];
-      expect(commandMatches.length).toBe(17);
+      expect(commandMatches.length).toBe(18);
     });
 
     it("returns valid HTML with bold tags", () => {
@@ -35,10 +36,38 @@ describe("bot-ui", () => {
     });
   });
 
+  describe("renderHelpTopicMessage", () => {
+    it("explains the attach handoff flow", () => {
+      const { plain } = renderHelpTopicMessage("attach");
+      expect(plain).toContain("/attach <thread-id>");
+      expect(plain).toContain("Thread ID");
+      expect(plain).toContain("/session");
+    });
+
+    it("explains the handback flow", () => {
+      const { plain } = renderHelpTopicMessage("handback");
+      expect(plain).toContain("/handback");
+      expect(plain).toContain("codex resume <thread-id>");
+      expect(plain).toContain("Telegramon addig folytatott beszélgetést");
+    });
+
+    it("accepts the common hangback typo as an alias", () => {
+      const { plain } = renderHelpTopicMessage("hangback");
+      expect(plain).toContain("/handback");
+    });
+
+    it("returns topic suggestions for unknown topics", () => {
+      const { plain } = renderHelpTopicMessage("nincsilyen");
+      expect(plain).toContain("Nincs ilyen részletes súgó");
+      expect(plain).toContain("attach");
+      expect(plain).toContain("handback");
+    });
+  });
+
   describe("renderWelcomeFirstTime", () => {
     it("shows welcome without auth warning", () => {
       const { html, plain } = renderWelcomeFirstTime();
-      expect(html).toContain("AttysCodexBridge is ready");
+      expect(html).toContain("AttysCodexBridge készen áll");
       expect(plain).toContain("/help");
       expect(html).not.toContain("⚠️");
     });
@@ -64,7 +93,7 @@ describe("bot-ui", () => {
 
     it("shows topic label for topic sessions", () => {
       const { html } = renderWelcomeReturning("", "", true);
-      expect(html).toContain("topic session");
+      expect(html).toContain("téma szál");
     });
 
     it("includes auth warning when provided", () => {
@@ -136,7 +165,7 @@ describe("bot-ui", () => {
         relativeTime: "5m ago",
         isActive: false,
       });
-      expect(label).toContain("(untitled)");
+      expect(label).toContain("(cím nélkül)");
     });
 
     it("truncates long model names", () => {

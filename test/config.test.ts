@@ -15,6 +15,7 @@ describe("loadConfig", () => {
     process.env = { ...originalEnv };
     delete process.env.TELEGRAM_BOT_TOKEN;
     delete process.env.TELEGRAM_ALLOWED_USER_IDS;
+    delete process.env.TELECODEX_HOST_LABEL;
     delete process.env.CODEX_API_KEY;
     delete process.env.CODEX_MODEL;
     delete process.env.TELECODEX_WORKSPACE_ROOT;
@@ -30,6 +31,11 @@ describe("loadConfig", () => {
     delete process.env.MAX_FILE_SIZE;
     delete process.env.ENABLE_TELEGRAM_LOGIN;
     delete process.env.ENABLE_TELEGRAM_REACTIONS;
+    delete process.env.TELEGRAM_API_TIMEOUT_MS;
+    delete process.env.TELEGRAM_EDIT_DEBOUNCE_MS;
+    delete process.env.TELEGRAM_TYPING_INTERVAL_MS;
+    delete process.env.CODEX_NO_OUTPUT_STATUS_MS;
+    delete process.env.CODEX_TURN_HARD_TIMEOUT_MS;
     delete process.env.container;
   });
 
@@ -69,6 +75,9 @@ describe("loadConfig", () => {
       telegramBotToken: "bot-token",
       telegramAllowedUserIds: [123, 456],
       telegramAllowedUserIdSet: new Set([123, 456]),
+      hostLabel: `${config.hostName}\\${config.userName}`,
+      hostName: config.hostName,
+      userName: config.userName,
       workspace: process.cwd(),
       workspaceRoot: undefined,
       stateDir: path.join(process.cwd(), ".telecodex"),
@@ -106,6 +115,11 @@ describe("loadConfig", () => {
       showTurnTokenUsage: false,
       enableTelegramLogin: true,
       enableTelegramReactions: false,
+      telegramApiTimeoutMs: 20_000,
+      telegramEditDebounceMs: 5_000,
+      telegramTypingIntervalMs: 30_000,
+      codexNoOutputStatusMs: 5 * 60_000,
+      codexTurnHardTimeoutMs: 60 * 60_000,
     });
   });
 
@@ -149,6 +163,14 @@ describe("loadConfig", () => {
     expect(config.showTurnTokenUsage).toBe(false);
     expect(config.enableTelegramLogin).toBe(true);
     expect(config.enableTelegramReactions).toBe(false);
+    expect(config.hostLabel).toBe(`${config.hostName}\\${config.userName}`);
+    expect(config.hostName).toBeTruthy();
+    expect(config.userName).toBeTruthy();
+    expect(config.telegramApiTimeoutMs).toBe(20_000);
+    expect(config.telegramEditDebounceMs).toBe(5_000);
+    expect(config.telegramTypingIntervalMs).toBe(30_000);
+    expect(config.codexNoOutputStatusMs).toBe(5 * 60_000);
+    expect(config.codexTurnHardTimeoutMs).toBe(60 * 60_000);
     expect(config.workspace).toBe(process.cwd());
     expect(config.workspaceRoot).toBeUndefined();
     expect(config.stateDir).toBe(path.join(process.cwd(), ".telecodex"));
@@ -234,15 +256,30 @@ describe("loadConfig", () => {
   it("parses explicit multi-repo workspace settings", () => {
     process.env.TELEGRAM_BOT_TOKEN = "bot-token";
     process.env.TELEGRAM_ALLOWED_USER_IDS = "123";
-    process.env.TELECODEX_WORKSPACE_ROOT = "D:\\codex_works";
-    process.env.TELECODEX_DEFAULT_WORKSPACE = "D:\\codex_works\\email_header_analyzer";
-    process.env.TELECODEX_STATE_DIR = "D:\\codex_works\\telecodex\\.telecodex";
+    const workspaceRoot = path.join(tempDir, "codex_works");
+    const defaultWorkspace = path.join(workspaceRoot, "email_header_analyzer");
+    const stateDir = path.join(workspaceRoot, "telecodex", ".telecodex");
+    process.env.TELECODEX_WORKSPACE_ROOT = workspaceRoot;
+    process.env.TELECODEX_DEFAULT_WORKSPACE = defaultWorkspace;
+    process.env.TELECODEX_STATE_DIR = stateDir;
 
     const config = loadConfig();
 
-    expect(config.workspaceRoot).toBe(path.resolve("D:\\codex_works"));
-    expect(config.workspace).toBe(path.resolve("D:\\codex_works\\email_header_analyzer"));
-    expect(config.stateDir).toBe(path.resolve("D:\\codex_works\\telecodex\\.telecodex"));
+    expect(config.workspaceRoot).toBe(path.resolve(workspaceRoot));
+    expect(config.workspace).toBe(path.resolve(defaultWorkspace));
+    expect(config.stateDir).toBe(path.resolve(stateDir));
+  });
+
+  it("parses an explicit host label", () => {
+    process.env.TELEGRAM_BOT_TOKEN = "bot-token";
+    process.env.TELEGRAM_ALLOWED_USER_IDS = "123";
+    process.env.TELECODEX_HOST_LABEL = "otthon";
+
+    const config = loadConfig();
+
+    expect(config.hostLabel).toBe("otthon");
+    expect(config.hostName).toBeTruthy();
+    expect(config.userName).toBeTruthy();
   });
 
   it("parses MAX_FILE_SIZE when configured", () => {
@@ -327,6 +364,24 @@ describe("loadConfig", () => {
     expect(config.showTurnTokenUsage).toBe(false);
   });
 
+  it("parses watchdog and timeout settings", () => {
+    process.env.TELEGRAM_BOT_TOKEN = "bot-token";
+    process.env.TELEGRAM_ALLOWED_USER_IDS = "123";
+    process.env.TELEGRAM_API_TIMEOUT_MS = "7000";
+    process.env.TELEGRAM_EDIT_DEBOUNCE_MS = "8000";
+    process.env.TELEGRAM_TYPING_INTERVAL_MS = "9000";
+    process.env.CODEX_NO_OUTPUT_STATUS_MS = "10000";
+    process.env.CODEX_TURN_HARD_TIMEOUT_MS = "11000";
+
+    const config = loadConfig();
+
+    expect(config.telegramApiTimeoutMs).toBe(7000);
+    expect(config.telegramEditDebounceMs).toBe(8000);
+    expect(config.telegramTypingIntervalMs).toBe(9000);
+    expect(config.codexNoOutputStatusMs).toBe(10000);
+    expect(config.codexTurnHardTimeoutMs).toBe(11000);
+  });
+
   it("falls back to defaults for invalid optional enum values", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     process.env.TELEGRAM_BOT_TOKEN = "bot-token";
@@ -335,6 +390,7 @@ describe("loadConfig", () => {
     process.env.CODEX_APPROVAL_POLICY = "sometimes";
     process.env.TOOL_VERBOSITY = "loud";
     process.env.MAX_FILE_SIZE = "nope";
+    process.env.TELEGRAM_API_TIMEOUT_MS = "0";
 
     const config = loadConfig();
 
@@ -342,7 +398,8 @@ describe("loadConfig", () => {
     expect(config.codexApprovalPolicy).toBe("never");
     expect(config.toolVerbosity).toBe("summary");
     expect(config.maxFileSize).toBe(20 * 1024 * 1024);
-    expect(warnSpy).toHaveBeenCalledTimes(4);
+    expect(config.telegramApiTimeoutMs).toBe(20_000);
+    expect(warnSpy).toHaveBeenCalledTimes(5);
   });
 
   it("parses explicit launch profiles and default selection", () => {

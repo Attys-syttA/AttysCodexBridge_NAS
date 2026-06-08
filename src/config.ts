@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import {
@@ -19,6 +20,9 @@ export interface TeleCodexConfig {
   telegramBotToken: string;
   telegramAllowedUserIds: number[];
   telegramAllowedUserIdSet: Set<number>;
+  hostLabel: string;
+  hostName: string;
+  userName: string;
   workspace: string;
   workspaceRoot?: string;
   stateDir: string;
@@ -34,6 +38,11 @@ export interface TeleCodexConfig {
   showTurnTokenUsage: boolean;
   enableTelegramLogin: boolean;
   enableTelegramReactions: boolean;
+  telegramApiTimeoutMs: number;
+  telegramEditDebounceMs: number;
+  telegramTypingIntervalMs: number;
+  codexNoOutputStatusMs: number;
+  codexTurnHardTimeoutMs: number;
 }
 
 export function loadConfig(): TeleCodexConfig {
@@ -41,6 +50,9 @@ export function loadConfig(): TeleCodexConfig {
 
   const telegramBotToken = requireEnv("TELEGRAM_BOT_TOKEN");
   const telegramAllowedUserIds = parseAllowedUserIds(requireEnv("TELEGRAM_ALLOWED_USER_IDS"));
+  const hostName = os.hostname();
+  const userName = os.userInfo().username;
+  const hostLabel = optionalString(process.env.TELECODEX_HOST_LABEL) ?? `${hostName}\\${userName}`;
   const workspaceRoot = resolveWorkspaceRoot();
   const workspace = resolveWorkspace(workspaceRoot);
   const stateDir = resolveStateDir();
@@ -70,11 +82,39 @@ export function loadConfig(): TeleCodexConfig {
     optionalString(process.env.ENABLE_TELEGRAM_REACTIONS),
     false,
   );
+  const telegramApiTimeoutMs = parsePositiveIntegerEnv(
+    optionalString(process.env.TELEGRAM_API_TIMEOUT_MS),
+    20_000,
+    "TELEGRAM_API_TIMEOUT_MS",
+  );
+  const telegramEditDebounceMs = parsePositiveIntegerEnv(
+    optionalString(process.env.TELEGRAM_EDIT_DEBOUNCE_MS),
+    5_000,
+    "TELEGRAM_EDIT_DEBOUNCE_MS",
+  );
+  const telegramTypingIntervalMs = parsePositiveIntegerEnv(
+    optionalString(process.env.TELEGRAM_TYPING_INTERVAL_MS),
+    30_000,
+    "TELEGRAM_TYPING_INTERVAL_MS",
+  );
+  const codexNoOutputStatusMs = parsePositiveIntegerEnv(
+    optionalString(process.env.CODEX_NO_OUTPUT_STATUS_MS),
+    5 * 60_000,
+    "CODEX_NO_OUTPUT_STATUS_MS",
+  );
+  const codexTurnHardTimeoutMs = parsePositiveIntegerEnv(
+    optionalString(process.env.CODEX_TURN_HARD_TIMEOUT_MS),
+    60 * 60_000,
+    "CODEX_TURN_HARD_TIMEOUT_MS",
+  );
 
   return {
     telegramBotToken,
     telegramAllowedUserIds,
     telegramAllowedUserIdSet: new Set(telegramAllowedUserIds),
+    hostLabel,
+    hostName,
+    userName,
     workspace,
     workspaceRoot,
     stateDir,
@@ -90,12 +130,17 @@ export function loadConfig(): TeleCodexConfig {
     showTurnTokenUsage,
     enableTelegramLogin,
     enableTelegramReactions,
+    telegramApiTimeoutMs,
+    telegramEditDebounceMs,
+    telegramTypingIntervalMs,
+    codexNoOutputStatusMs,
+    codexTurnHardTimeoutMs,
   };
 }
 
 /**
  * Optional workspace root used to discover candidate project directories.
- * Outside Docker this can point to a parent folder like <CODEX_WORKS_ON_WORK_PC>.
+ * Outside Docker this can point to the shared parent workspace folder.
  */
 function resolveWorkspaceRoot(): string | undefined {
   const raw = optionalString(process.env.TELECODEX_WORKSPACE_ROOT);
@@ -232,6 +277,20 @@ function parseMaxFileSize(raw: string | undefined): number {
   if (Number.isNaN(parsed) || parsed <= 0) {
     console.warn(`Invalid MAX_FILE_SIZE value: "${raw}". Falling back to 20 MB.`);
     return 20 * 1024 * 1024;
+  }
+
+  return parsed;
+}
+
+function parsePositiveIntegerEnv(raw: string | undefined, defaultValue: number, name: string): number {
+  if (!raw) {
+    return defaultValue;
+  }
+
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    console.warn(`Invalid ${name} value: "${raw}". Falling back to ${defaultValue}.`);
+    return defaultValue;
   }
 
   return parsed;
