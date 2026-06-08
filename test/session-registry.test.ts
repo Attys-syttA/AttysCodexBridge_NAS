@@ -456,6 +456,52 @@ describe("SessionRegistry", () => {
     ]);
   });
 
+  it("persists and reloads handoff metadata for a context", () => {
+    const config = createConfig();
+    const registry = new SessionRegistry(config);
+
+    registry.setHandoff("123", {
+      status: "pending_inbound",
+      workspace: "/workspace/a",
+      threadId: "thread-a",
+      sourceHost: "vsc",
+      targetHost: "test-host",
+      createdAt: "2026-06-08T19:00:00.000Z",
+      expiresAt: "2026-06-08T20:00:00.000Z",
+    });
+
+    const reloaded = new SessionRegistry(config);
+
+    expect(reloaded.getHandoff("123")).toEqual({
+      status: "pending_inbound",
+      workspace: "/workspace/a",
+      threadId: "thread-a",
+      sourceHost: "vsc",
+      targetHost: "test-host",
+      createdAt: "2026-06-08T19:00:00.000Z",
+      expiresAt: "2026-06-08T20:00:00.000Z",
+    });
+  });
+
+  it("clears handoff metadata without removing the context", async () => {
+    const registry = new SessionRegistry(createConfig());
+    const session = await registry.getOrCreate("123");
+    registry.updateMetadata("123", session as any);
+    registry.setHandoff("123", {
+      status: "pending_vsc_pickup",
+      workspace: "/workspace/base",
+      threadId: "thread-a",
+      sourceHost: "test-host",
+      targetHost: "office",
+      createdAt: "2026-06-08T19:00:00.000Z",
+    });
+
+    registry.clearHandoff("123");
+
+    expect(registry.getHandoff("123")).toBeUndefined();
+    expect(registry.hasMetadata("123")).toBe(true);
+  });
+
   it("disposeAll disposes all sessions and clears the map", async () => {
     const registry = new SessionRegistry(createConfig());
 

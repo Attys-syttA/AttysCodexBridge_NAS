@@ -14,7 +14,20 @@ export interface ContextMetadata {
   model?: string;
   reasoningEffort?: string;
   launchProfileId?: string;
+  handoff?: ContextHandoff;
   updatedAt: number;
+}
+
+export type HandoffStatus = "none" | "pending_inbound" | "attached" | "pending_vsc_pickup";
+
+export interface ContextHandoff {
+  status: HandoffStatus;
+  workspace: string;
+  threadId: string | null;
+  sourceHost?: string;
+  targetHost?: string;
+  createdAt: string;
+  expiresAt?: string;
 }
 
 export class SessionRegistry {
@@ -68,6 +81,7 @@ export class SessionRegistry {
 
   updateMetadata(contextKey: TelegramContextKey, session: CodexSessionService): void {
     const info = session.getInfo();
+    const existing = this.metadata.get(contextKey);
     this.metadata.set(contextKey, {
       contextKey,
       threadId: info.threadId,
@@ -75,6 +89,44 @@ export class SessionRegistry {
       model: info.model,
       reasoningEffort: info.reasoningEffort,
       launchProfileId: info.nextLaunchProfileId ?? info.launchProfileId,
+      ...(existing?.handoff ? { handoff: existing.handoff } : {}),
+      updatedAt: Date.now(),
+    });
+    this.persistMetadata();
+  }
+
+  getMetadata(contextKey: TelegramContextKey): ContextMetadata | undefined {
+    return this.metadata.get(contextKey);
+  }
+
+  getHandoff(contextKey: TelegramContextKey): ContextHandoff | undefined {
+    return this.metadata.get(contextKey)?.handoff;
+  }
+
+  setHandoff(contextKey: TelegramContextKey, handoff: ContextHandoff): void {
+    const existing = this.metadata.get(contextKey);
+    this.metadata.set(contextKey, {
+      contextKey,
+      threadId: existing?.threadId ?? handoff.threadId,
+      workspace: existing?.workspace ?? handoff.workspace,
+      model: existing?.model,
+      reasoningEffort: existing?.reasoningEffort,
+      launchProfileId: existing?.launchProfileId,
+      handoff,
+      updatedAt: Date.now(),
+    });
+    this.persistMetadata();
+  }
+
+  clearHandoff(contextKey: TelegramContextKey): void {
+    const existing = this.metadata.get(contextKey);
+    if (!existing?.handoff) {
+      return;
+    }
+
+    const { handoff: _handoff, ...next } = existing;
+    this.metadata.set(contextKey, {
+      ...next,
       updatedAt: Date.now(),
     });
     this.persistMetadata();

@@ -21,12 +21,13 @@ describe("bot-ui", () => {
       expect(plain).toContain("/help");
       expect(plain).toContain("/retry");
       expect(plain).toContain("/launch_profiles");
+      expect(plain).toContain("/handoff_to");
     });
 
-    it("lists all 18 commands", () => {
+    it("lists all 19 commands", () => {
       const { plain } = renderHelpMessage();
       const commandMatches = plain.match(/\/\w+/g) ?? [];
-      expect(commandMatches.length).toBe(18);
+      expect(commandMatches.length).toBe(19);
     });
 
     it("returns valid HTML with bold tags", () => {

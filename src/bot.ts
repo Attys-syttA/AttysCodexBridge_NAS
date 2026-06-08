@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readFile, unlink, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -40,7 +40,7 @@ import { contextKeyFromCtx, isTopicContextKey, parseContextKey, type TelegramCon
 import { friendlyErrorText } from "./error-messages.js";
 import { escapeHTML, formatTelegramHTML } from "./format.js";
 import { createRuntimeHealthMonitor, type RuntimeHealthMonitor } from "./health.js";
-import { SessionRegistry } from "./session-registry.js";
+import { SessionRegistry, type ContextHandoff } from "./session-registry.js";
 import { getAvailableBackends, transcribeAudio } from "./voice.js";
 import { formatWorkspaceButtonLabel } from "./workspace.js";
 
@@ -70,6 +70,7 @@ type TextOptions = {
   fallbackText?: string;
   replyMarkup?: InlineKeyboard;
   messageThreadId?: number;
+  replyToMessageId?: number;
   timeoutMs?: number;
 };
 
@@ -179,6 +180,32 @@ export function createBot(
 
   const isTopicContext = (contextKey: TelegramContextKey): boolean => isTopicContextKey(contextKey);
 
+  const setAttachedHandoff = (contextKey: TelegramContextKey, info: CodexSessionInfo, sourceHost = config.hostLabel): void => {
+    if (!info.threadId) {
+      return;
+    }
+
+    registry.setHandoff(contextKey, {
+      status: "attached",
+      workspace: info.workspace,
+      threadId: info.threadId,
+      sourceHost,
+      targetHost: config.hostLabel,
+      createdAt: new Date().toISOString(),
+    });
+  };
+
+  const blockPromptForPendingHandoff = async (ctx: Context, contextKey: TelegramContextKey): Promise<boolean> => {
+    const handoff = registry.getHandoff(contextKey);
+    if (!handoff || !shouldBlockPromptForHandoff(handoff)) {
+      return false;
+    }
+
+    const plainText = renderPendingHandoffPlain(handoff);
+    await safeReply(ctx, renderPendingHandoffHTML(handoff), { fallbackText: plainText });
+    return true;
+  };
+
   const clearLaunchSelectionState = (contextKey: TelegramContextKey): void => {
     pendingLaunchPicks.delete(contextKey);
     pendingLaunchButtons.delete(contextKey);
@@ -287,6 +314,7 @@ export function createBot(
   ): Promise<void> => {
     const parsed = parseContextKey(contextKey);
     const messageThreadId = parsed.messageThreadId;
+    const replyToMessageId = resolveReplyToMessageId(ctx);
     const requestId = randomUUID();
 
     if (isBusy(contextKey)) {
@@ -418,6 +446,7 @@ export function createBot(
           fallbackText: preview.fallbackText,
           replyMarkup: abortKeyboard,
           messageThreadId,
+          replyToMessageId,
         });
         responseMessageId = message.message_id;
         lastRenderedText = preview.text;
@@ -522,6 +551,7 @@ export function createBot(
           parseMode: firstChunk.parseMode,
           fallbackText: firstChunk.fallbackText,
           messageThreadId,
+          replyToMessageId,
         });
         responseMessageId = message.message_id;
         health.markOutboundTelegramMessage(requestId);
@@ -532,6 +562,7 @@ export function createBot(
           parseMode: chunk.parseMode,
           fallbackText: chunk.fallbackText,
           messageThreadId,
+          replyToMessageId,
         });
         health.markOutboundTelegramMessage(requestId);
       }
@@ -611,6 +642,7 @@ export function createBot(
             parseMode: messageText.parseMode,
             fallbackText: messageText.fallbackText,
             messageThreadId,
+            replyToMessageId,
           });
           health.markOutboundTelegramMessage(requestId);
           const state = toolStates.get(toolCallId);
@@ -661,6 +693,7 @@ export function createBot(
             parseMode: state.finalStatus.parseMode,
             fallbackText: state.finalStatus.fallbackText,
             messageThreadId,
+            replyToMessageId,
           })
             .then(() => health.markOutboundTelegramMessage(requestId))
             .catch((error) => {
@@ -698,7 +731,11 @@ export function createBot(
         if (!planMessageId) {
           if (planMessageSending) return;
           planMessageSending = true;
-          void sendTextMessage(bot.api, chatId, rendered, { parseMode: "HTML", messageThreadId })
+          void sendTextMessage(bot.api, chatId, rendered, {
+            parseMode: "HTML",
+            messageThreadId,
+            replyToMessageId,
+          })
             .then((msg) => {
               planMessageId = msg.message_id;
               health.markOutboundTelegramMessage(requestId);
@@ -811,6 +848,8 @@ export function createBot(
     messageThreadId?: number,
   ): Promise<void> => {
     const { artifacts, skippedCount } = await collectArtifactReport(outDir);
+    const replyToMessageId = resolveReplyToMessageId(ctx);
+    const replyParameters = buildReplyParameters(replyToMessageId);
 
     if (artifacts.length === 0 && skippedCount === 0) {
       return;
@@ -827,6 +866,7 @@ export function createBot(
       try {
         await ctx.api.sendDocument(chatId, new InputFile(artifact.localPath, artifact.name), {
           ...(messageThreadId ? { message_thread_id: messageThreadId } : {}),
+          ...(replyParameters ? { reply_parameters: replyParameters } : {}),
         });
       } catch (error) {
         failedCount += 1;
@@ -1076,6 +1116,7 @@ export function createBot(
       try {
         const info = await session.newThread();
         updateSessionMetadata(contextKey, session);
+        registry.clearHandoff(contextKey);
         const label = isTopicContext(contextKey) ? "Új szál létrehozva ehhez a témához." : "Új szál létrehozva.";
         const plainText = `${label}\n\n${renderSessionInfoPlain(config, info)}`;
         const html = `<b>${escapeHTML(label)}</b>\n\n${renderSessionInfoHTML(config, info)}`;
@@ -1127,6 +1168,7 @@ export function createBot(
       try {
         const info = await session.newThread();
         updateSessionMetadata(contextKey, session);
+        registry.clearHandoff(contextKey);
         const label = isTopicContext(contextKey)
           ? "Az aktív projekt megerősítve ehhez a témához."
           : "Az aktív projekt megerősítve ehhez a chathez.";
@@ -1218,9 +1260,14 @@ export function createBot(
     const { contextKey, session } = contextSession;
     const info = session.getInfo();
     const contextLabel = isTopicContext(contextKey) ? "Téma szál" : "Chat szál";
+    const handoff = registry.getHandoff(contextKey);
 
     const plainLines = [`${contextLabel}:`, renderSessionInfoPlain(config, info)];
     const htmlLines = [`<b>${escapeHTML(contextLabel)}:</b>`, renderSessionInfoHTML(config, info)];
+    if (handoff && handoff.status !== "none") {
+      plainLines.push("", renderHandoffPlain(handoff));
+      htmlLines.push("", renderHandoffHTML(handoff));
+    }
 
     await safeReply(ctx, htmlLines.join("\n"), { fallbackText: plainLines.join("\n") });
   });
@@ -1354,6 +1401,21 @@ export function createBot(
 
       const shellEscape = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`;
       const resumeCommand = `cd ${shellEscape(info.workspace)} && codex resume ${shellEscape(info.threadId)}`;
+      const handoff: ContextHandoff = {
+        status: "pending_vsc_pickup",
+        workspace: info.workspace,
+        threadId: info.threadId,
+        sourceHost: config.hostLabel,
+        targetHost: config.hostLabel,
+        createdAt: new Date().toISOString(),
+      };
+      registry.setHandoff(contextKey, handoff);
+      await appendHandoffOutboxRecord(config, {
+        kind: "handback",
+        contextKey,
+        handoff,
+        resumeCommand,
+      });
 
       let copiedToClipboard = false;
       if (process.platform === "darwin") {
@@ -1379,6 +1441,7 @@ export function createBot(
         copiedToClipboard ? "📋 Parancs vágólapra másolva!" : undefined,
         "",
         "Küldj ide bármilyen üzenetet egy új AttysCodexBridge szál indításához.",
+        "Ha mégis ezt folytatnád Telegramon, használd: /attach " + info.threadId,
       ]
         .filter((line): line is string => line !== undefined)
         .join("\n");
@@ -1392,6 +1455,7 @@ export function createBot(
         copiedToClipboard ? "📋 <i>Parancs vágólapra másolva!</i>" : undefined,
         "",
         "Küldj ide bármilyen üzenetet egy új AttysCodexBridge szál indításához.",
+        `Ha mégis ezt folytatnád Telegramon, használd: <code>/attach ${escapeHTML(info.threadId)}</code>`,
       ]
         .filter((line): line is string => line !== undefined)
         .join("\n");
@@ -1402,6 +1466,68 @@ export function createBot(
         fallbackText: `Nem sikerült: ${friendlyErrorText(error)}`,
       });
     }
+  });
+
+  bot.command("handoff_to", async (ctx) => {
+    const contextSession = await getContextSession(ctx, { deferThreadStart: true });
+    if (!contextSession) {
+      return;
+    }
+
+    const { contextKey, session } = contextSession;
+    if (isBusy(contextKey)) {
+      await safeReply(ctx, escapeHTML("Futó kérés közben nem lehet célgépre átadni a szálat."), {
+        fallbackText: "Futó kérés közben nem lehet célgépre átadni a szálat.",
+      });
+      return;
+    }
+
+    const rawText = ctx.message?.text ?? "";
+    const targetHost = rawText.replace(/^\/handoff_to(?:@\w+)?\s*/, "").trim();
+    if (!targetHost) {
+      await safeReply(ctx, escapeHTML("Használat: /handoff_to <host>"), {
+        fallbackText: "Használat: /handoff_to <host>",
+      });
+      return;
+    }
+
+    const info = session.getInfo();
+    if (!info.threadId) {
+      await safeReply(ctx, escapeHTML("Nincs aktív thread ID, amit át lehetne adni. Előbb indíts vagy csatolj egy szálat."), {
+        fallbackText: "Nincs aktív thread ID, amit át lehetne adni. Előbb indíts vagy csatolj egy szálat.",
+      });
+      return;
+    }
+
+    const handoff: ContextHandoff = {
+      status: "pending_vsc_pickup",
+      workspace: info.workspace,
+      threadId: info.threadId,
+      sourceHost: config.hostLabel,
+      targetHost,
+      createdAt: new Date().toISOString(),
+    };
+    registry.setHandoff(contextKey, handoff);
+    await appendHandoffOutboxRecord(config, {
+      kind: "handoff_to",
+      contextKey,
+      handoff,
+      resumeCommand: `codex resume ${info.threadId}`,
+    });
+
+    const plainText = [
+      `Átadás előkészítve: ${targetHost}`,
+      `Workspace: ${info.workspace}`,
+      `Thread ID: ${info.threadId}`,
+      `Folytatás: codex resume ${info.threadId}`,
+    ].join("\n");
+    const html = [
+      `<b>Átadás előkészítve:</b> <code>${escapeHTML(targetHost)}</code>`,
+      `<b>Workspace:</b> <code>${escapeHTML(info.workspace)}</code>`,
+      `<b>Thread ID:</b> <code>${escapeHTML(info.threadId)}</code>`,
+      `<b>Folytatás:</b> <code>codex resume ${escapeHTML(info.threadId)}</code>`,
+    ].join("\n");
+    await safeReply(ctx, html, { fallbackText: plainText });
   });
 
   bot.command("attach", async (ctx) => {
@@ -1440,6 +1566,7 @@ export function createBot(
     try {
       const info = await session.switchSession(threadId);
       updateSessionMetadata(contextKey, session);
+      setAttachedHandoff(contextKey, info);
       const html = `<b>Szál csatolva.</b>\n\n${renderSessionInfoHTML(config, info)}`;
       const plain = `Szál csatolva.\n\n${renderSessionInfoPlain(config, info)}`;
       await safeReply(ctx, html, { fallbackText: plain });
@@ -1480,6 +1607,7 @@ export function createBot(
       try {
         const info = await session.switchSession(threadId);
         updateSessionMetadata(contextKey, session);
+        setAttachedHandoff(contextKey, info);
         const html = `<b>Szál váltva.</b>\n\n${renderSessionInfoHTML(config, info)}`;
         const plain = `Szál váltva.\n\n${renderSessionInfoPlain(config, info)}`;
         await safeReply(ctx, html, { fallbackText: plain });
@@ -1686,6 +1814,7 @@ export function createBot(
     try {
       const info = await session.switchSession(threadId);
       updateSessionMetadata(contextKey, session);
+      setAttachedHandoff(contextKey, info);
       const plainText = `Szál váltva.\n\n${renderSessionInfoPlain(config, info)}`;
       const html = `<b>Szál váltva.</b>\n\n${renderSessionInfoHTML(config, info)}`;
 
@@ -1743,6 +1872,7 @@ export function createBot(
     try {
       const info = await session.newThread(workspace);
       updateSessionMetadata(contextKey, session);
+      registry.clearHandoff(contextKey);
       const label = isTopicContext(contextKey) ? "Új szál létrehozva ehhez a témához." : "Új szál létrehozva.";
       const plainText = `${label}\n\n${renderSessionInfoPlain(config, info)}`;
       const html = `<b>${escapeHTML(label)}</b>\n\n${renderSessionInfoHTML(config, info)}`;
@@ -1801,6 +1931,7 @@ export function createBot(
     try {
       const info = await session.newThread(workspace);
       updateSessionMetadata(contextKey, session);
+      registry.clearHandoff(contextKey);
       const label = isTopicContext(contextKey)
         ? "Az aktív projekt megváltozott ennél a témánál."
         : "Az aktív projekt megváltozott ennél a chatnél.";
@@ -2091,6 +2222,12 @@ export function createBot(
     });
   });
 
+  bot.hears(/^\/(?:azzach|atach|attch|attac|atatch|attache)(?:@\w+)?(?:\s|$)/i, async (ctx) => {
+    await safeReply(ctx, escapeHTML("Attach parancsra gondoltál? Használat: /attach <thread-id>"), {
+      fallbackText: "Attach parancsra gondoltál? Használat: /attach <thread-id>",
+    });
+  });
+
   bot.on("message:text", async (ctx) => {
     const contextSession = await getContextSession(ctx);
     if (!contextSession) {
@@ -2103,6 +2240,10 @@ export function createBot(
     }
 
     const { contextKey, session } = contextSession;
+    if (await blockPromptForPendingHandoff(ctx, contextKey)) {
+      return;
+    }
+
     lastPromptInput.set(contextKey, userText);
     await setReaction(ctx, "👀");
     try {
@@ -2121,6 +2262,10 @@ export function createBot(
 
     const { contextKey, session } = contextSession;
     const chatId = ctx.chat.id;
+    if (await blockPromptForPendingHandoff(ctx, contextKey)) {
+      return;
+    }
+
     if (isBusy(contextKey)) {
       await sendBusyReply(ctx);
       return;
@@ -2190,6 +2335,10 @@ export function createBot(
 
     const { contextKey, session } = contextSession;
     const chatId = ctx.chat.id;
+    if (await blockPromptForPendingHandoff(ctx, contextKey)) {
+      return;
+    }
+
     if (isBusy(contextKey)) {
       await sendBusyReply(ctx);
       return;
@@ -2245,6 +2394,10 @@ export function createBot(
 
     const { contextKey, session } = contextSession;
     const chatId = ctx.chat.id;
+    if (await blockPromptForPendingHandoff(ctx, contextKey)) {
+      return;
+    }
+
     if (isBusy(contextKey)) {
       await sendBusyReply(ctx);
       return;
@@ -2368,6 +2521,7 @@ export async function registerCommands(bot: Bot<Context>): Promise<void> {
     { command: "voice", description: "Hangfelismerés állapota" },
     { command: "watchdog", description: "Bridge állapotkép" },
     { command: "handback", description: "Szál visszaadása Codex CLI-nek" },
+    { command: "handoff_to", description: "Szál átadása célgépnek" },
     { command: "attach", description: "Codex szál csatolása ehhez a témához" },
     { command: "switch", description: "Váltás thread ID alapján" },
   ]);
@@ -2414,6 +2568,69 @@ function renderSessionInfoHTML(config: TeleCodexConfig, info: CodexSessionInfo):
   ]
     .filter((line): line is string => Boolean(line))
     .join("\n");
+}
+
+export function renderHandoffPlain(handoff: ContextHandoff): string {
+  return [
+    `Átadás állapot: ${formatHandoffStatus(handoff.status)}`,
+    `Átadás workspace: ${handoff.workspace}`,
+    handoff.threadId ? `Átadás thread ID: ${handoff.threadId}` : undefined,
+    handoff.sourceHost ? `Forrás host: ${handoff.sourceHost}` : undefined,
+    handoff.targetHost ? `Cél host: ${handoff.targetHost}` : undefined,
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join("\n");
+}
+
+export function renderHandoffHTML(handoff: ContextHandoff): string {
+  return [
+    `<b>Átadás állapot:</b> <code>${escapeHTML(formatHandoffStatus(handoff.status))}</code>`,
+    `<b>Átadás workspace:</b> <code>${escapeHTML(handoff.workspace)}</code>`,
+    handoff.threadId ? `<b>Átadás thread ID:</b> <code>${escapeHTML(handoff.threadId)}</code>` : undefined,
+    handoff.sourceHost ? `<b>Forrás host:</b> <code>${escapeHTML(handoff.sourceHost)}</code>` : undefined,
+    handoff.targetHost ? `<b>Cél host:</b> <code>${escapeHTML(handoff.targetHost)}</code>` : undefined,
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join("\n");
+}
+
+export function renderPendingHandoffPlain(handoff: ContextHandoff): string {
+  return [
+    "Átadás vár megerősítésre.",
+    renderHandoffPlain(handoff),
+    "",
+    handoff.threadId ? `Folytatás Telegramon: /attach ${handoff.threadId}` : "Folytatás Telegramon: /attach <thread-id>",
+    "Új szál indítása: /new",
+  ].join("\n");
+}
+
+export function renderPendingHandoffHTML(handoff: ContextHandoff): string {
+  const attachCommand = handoff.threadId ? `/attach ${handoff.threadId}` : "/attach <thread-id>";
+  return [
+    "<b>Átadás vár megerősítésre.</b>",
+    renderHandoffHTML(handoff),
+    "",
+    `Folytatás Telegramon: <code>${escapeHTML(attachCommand)}</code>`,
+    "Új szál indítása: <code>/new</code>",
+  ].join("\n");
+}
+
+export function shouldBlockPromptForHandoff(handoff?: ContextHandoff): boolean {
+  return Boolean(handoff && handoff.status !== "none" && handoff.status !== "attached");
+}
+
+function formatHandoffStatus(status: ContextHandoff["status"]): string {
+  switch (status) {
+    case "pending_inbound":
+      return "bejövő átvétel függőben";
+    case "attached":
+      return "csatolva";
+    case "pending_vsc_pickup":
+      return "VSC átvétel függőben";
+    case "none":
+    default:
+      return "nincs";
+  }
 }
 
 function renderLaunchSummaryPlain(info: CodexSessionInfo): string {
@@ -2536,6 +2753,7 @@ async function safeReply(ctx: Context, text: string, options: TextOptions = {}):
   const parseMode = options.parseMode !== undefined ? options.parseMode : ("HTML" as TelegramParseMode);
   const messageThreadId =
     options.messageThreadId ?? ctx.message?.message_thread_id ?? ctx.callbackQuery?.message?.message_thread_id;
+  const replyToMessageId = options.replyToMessageId ?? resolveReplyToMessageId(ctx);
 
   const chunks = splitTelegramText(text);
   const fallbackChunks = options.fallbackText ? splitTelegramText(options.fallbackText) : [];
@@ -2546,6 +2764,7 @@ async function safeReply(ctx: Context, text: string, options: TextOptions = {}):
       fallbackText: fallbackChunks[index] ?? chunk,
       replyMarkup: index === 0 ? options.replyMarkup : undefined,
       messageThreadId,
+      replyToMessageId,
     });
   }
 }
@@ -2558,12 +2777,14 @@ async function sendTextMessage(
 ): Promise<{ message_id: number }> {
   const parseMode = Object.prototype.hasOwnProperty.call(options, "parseMode") ? options.parseMode : "HTML";
   const timeoutMs = options.timeoutMs ?? resolveTelegramApiTimeoutMs();
+  const replyParameters = buildReplyParameters(options.replyToMessageId);
 
   try {
     return await withTimeout(
       api.sendMessage(chatId, text, {
         ...(parseMode ? { parse_mode: parseMode } : {}),
         ...(options.messageThreadId ? { message_thread_id: options.messageThreadId } : {}),
+        ...(replyParameters ? { reply_parameters: replyParameters } : {}),
         reply_markup: options.replyMarkup,
       }),
       timeoutMs,
@@ -2574,6 +2795,7 @@ async function sendTextMessage(
       return await withTimeout(
         api.sendMessage(chatId, options.fallbackText, {
           ...(options.messageThreadId ? { message_thread_id: options.messageThreadId } : {}),
+          ...(replyParameters ? { reply_parameters: replyParameters } : {}),
           reply_markup: options.replyMarkup,
         }),
         timeoutMs,
@@ -2678,6 +2900,42 @@ function splitTelegramText(text: string): string[] {
   }
 
   return chunks.length > 0 ? chunks : [""];
+}
+
+export function resolveReplyToMessageId(ctx: Context, explicitReplyToMessageId?: number): number | undefined {
+  return explicitReplyToMessageId ?? ctx.message?.message_id ?? ctx.callbackQuery?.message?.message_id;
+}
+
+export function buildReplyParameters(replyToMessageId?: number): { message_id: number } | undefined {
+  if (!replyToMessageId) {
+    return undefined;
+  }
+
+  return { message_id: replyToMessageId };
+}
+
+async function appendHandoffOutboxRecord(
+  config: TeleCodexConfig,
+  record: {
+    kind: "handback" | "handoff_to";
+    contextKey: TelegramContextKey;
+    handoff: ContextHandoff;
+    resumeCommand: string;
+  },
+): Promise<void> {
+  await mkdir(config.stateDir, { recursive: true });
+  const outboxPathname = path.join(config.stateDir, "handoff-outbox.jsonl");
+  const line = JSON.stringify({
+    schemaVersion: 1,
+    at: new Date().toISOString(),
+    host: {
+      label: config.hostLabel,
+      name: config.hostName,
+      user: config.userName,
+    },
+    ...record,
+  });
+  await appendFile(outboxPathname, `${line}\n`, "utf8");
 }
 
 function splitMarkdownForTelegram(markdown: string): RenderedChunk[] {
