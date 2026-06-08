@@ -226,7 +226,7 @@ function withDatabase<T>(fn: (db: DatabaseInstance) => T): T | null {
 }
 
 function getCodexDir(): string | null {
-  const home = process.env.HOME?.trim();
+  const home = process.env.HOME?.trim() || process.env.USERPROFILE?.trim();
   return home ? path.join(home, ".codex") : null;
 }
 

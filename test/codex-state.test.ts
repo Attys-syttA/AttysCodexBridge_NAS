@@ -14,6 +14,8 @@ type ThreadFixture = {
 
 type LoadOptions = {
   home?: string;
+  userProfile?: string;
+  unsetHome?: boolean;
   files?: string[];
   stats?: Record<string, number>;
   directories?: string[];
@@ -24,6 +26,7 @@ type LoadOptions = {
 };
 
 const originalHome = process.env.HOME;
+const originalUserProfile = process.env.USERPROFILE;
 
 afterEach(() => {
   vi.doUnmock("node:fs");
@@ -35,10 +38,15 @@ afterEach(() => {
   } else {
     process.env.HOME = originalHome;
   }
+  if (originalUserProfile === undefined) {
+    delete process.env.USERPROFILE;
+  } else {
+    process.env.USERPROFILE = originalUserProfile;
+  }
 });
 
 async function loadCodexState(options: LoadOptions = {}) {
-  const home = options.home ?? "/Users/tester";
+  const home = options.home ?? options.userProfile ?? "/Users/tester";
   const codexDir = path.join(home, ".codex");
   const modelsPath = path.join(codexDir, "models_cache.json");
   const files = options.files ?? [];
@@ -46,7 +54,16 @@ async function loadCodexState(options: LoadOptions = {}) {
   const workspaceRoots = [...new Set(directories.map((directory) => path.dirname(directory)))];
   const stats = options.stats ?? {};
   const threads = options.threads ?? [];
-  process.env.HOME = home;
+  if (options.unsetHome) {
+    delete process.env.HOME;
+  } else {
+    process.env.HOME = options.home ?? home;
+  }
+  if (options.userProfile) {
+    process.env.USERPROFILE = options.userProfile;
+  } else {
+    delete process.env.USERPROFILE;
+  }
 
   vi.resetModules();
 
@@ -165,6 +182,22 @@ describe("codex-state", () => {
     });
 
     expect(state.findLatestDatabase()).toBe(newer);
+  });
+
+  it("uses USERPROFILE for the Codex directory when HOME is not set", async () => {
+    const userProfile = "C:\\Users\\tester";
+    const codexDir = path.join(userProfile, ".codex");
+    const database = path.join(codexDir, "state_windows.sqlite");
+    const state = await loadCodexState({
+      userProfile,
+      unsetHome: true,
+      files: ["state_windows.sqlite"],
+      stats: {
+        [database]: 300,
+      },
+    });
+
+    expect(state.findLatestDatabase()).toBe(database);
   });
 
   it("listThreads returns an empty array when better-sqlite3 is unavailable", async () => {
