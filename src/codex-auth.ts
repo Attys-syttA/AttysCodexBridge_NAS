@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 
 export interface AuthStatus {
   authenticated: boolean;
@@ -110,13 +111,16 @@ export async function startLogout(): Promise<LoginResult> {
 }
 
 function runCodexCommand(args: string[]): Promise<{ stdout: string; stderr: string }> {
+  const env = createCodexCommandEnv();
+  const command = createCodexCommand(args, env);
+
   return new Promise((resolve, reject) => {
     execFile(
-      CODEX_CLI,
-      args,
+      command.file,
+      command.args,
       {
         timeout: COMMAND_TIMEOUT_MS,
-        env: { ...process.env },
+        env,
         maxBuffer: 1024 * 1024,
       },
       (error, stdout, stderr) => {
@@ -135,6 +139,57 @@ function runCodexCommand(args: string[]): Promise<{ stdout: string; stderr: stri
       },
     );
   });
+}
+
+function createCodexCommand(args: string[], env: NodeJS.ProcessEnv): { file: string; args: string[] } {
+  if (process.platform !== "win32") {
+    return { file: CODEX_CLI, args };
+  }
+
+  const codexCli = resolveWindowsCodexCli(env);
+  return {
+    file: env.ComSpec || "cmd.exe",
+    args: ["/d", "/c", [codexCli, ...args].join(" ")],
+  };
+}
+
+function createCodexCommandEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  if (process.platform !== "win32") {
+    return env;
+  }
+
+  const npmPath = env.APPDATA ? `${env.APPDATA}\\npm` : undefined;
+  if (!npmPath) {
+    return env;
+  }
+
+  const pathKey = Object.keys(env).find((key) => key.toLowerCase() === "path") ?? "Path";
+  const currentPath = env[pathKey] ?? "";
+  const entries = currentPath.split(";").filter(Boolean);
+  if (!entries.some((entry) => entry.toLowerCase() === npmPath.toLowerCase())) {
+    env[pathKey] = [npmPath, ...entries].join(";");
+  }
+
+  return env;
+}
+
+function resolveWindowsCodexCli(env: NodeJS.ProcessEnv): string {
+  if (env.CODEX_CLI_PATH && existsSync(env.CODEX_CLI_PATH)) {
+    return env.CODEX_CLI_PATH;
+  }
+
+  const npmPath = env.APPDATA ? `${env.APPDATA}\\npm` : undefined;
+  if (npmPath) {
+    for (const filename of ["codex.cmd", "codex.exe", "codex.ps1"]) {
+      const candidate = `${npmPath}\\${filename}`;
+      if (existsSync(candidate)) {
+        return candidate;
+      }
+    }
+  }
+
+  return CODEX_CLI;
 }
 
 function parseCommandError(error: unknown): AuthStatus {

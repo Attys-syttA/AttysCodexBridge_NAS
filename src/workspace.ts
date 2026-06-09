@@ -34,17 +34,13 @@ export function normalizeWorkspaceList(config: TeleCodexConfig, workspaces: stri
 }
 
 export function isSelectableWorkspace(config: TeleCodexConfig, workspace: string): boolean {
-  if (isUnixAbsolutePath(workspace)) {
-    return isInsideWorkspaceRoot(config.workspaceRoot, workspace) || existsSync(workspace);
-  }
-
   const normalized = stripExtendedLengthPrefix(path.normalize(workspace));
-  if (!existsSync(normalized)) {
-    return false;
-  }
-
   if (isInsideWorkspaceRoot(config.workspaceRoot, normalized)) {
     return true;
+  }
+
+  if (!existsSync(normalized)) {
+    return false;
   }
 
   return isWorkspaceCandidate(normalized);
@@ -80,10 +76,6 @@ function remapIntoWorkspaceRoot(workspaceRoot: string | undefined, workspace: st
 
 function isWindowsDrivePath(workspace: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(workspace);
-}
-
-function isUnixAbsolutePath(workspace: string): boolean {
-  return workspace.startsWith("/") && !isWindowsDrivePath(workspace);
 }
 
 function isInsideWorkspaceRoot(workspaceRoot: string | undefined, workspace: string): boolean {

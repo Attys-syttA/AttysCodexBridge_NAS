@@ -108,18 +108,15 @@ Write-JsonLine -Path $eventLog -Value @{
   }
 }
 
-$process.WaitForExit()
-
 Write-JsonLine -Path $eventLog -Value @{
   at = (Get-Date).ToUniversalTime().ToString('o')
-  type = 'launcher_observed_exit'
+  type = 'launcher_detached'
   pid = $PID
   detail = @{
     botPid = $process.Id
-    exitCode = $process.ExitCode
     stdoutLog = $stdoutLog
     stderrLog = $stderrLog
   }
 }
 
-exit $process.ExitCode
+exit 0
