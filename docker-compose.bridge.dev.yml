@@ -1,0 +1,16 @@
+services:
+  telecodex-bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile.bridge.dev
+    env_file:
+      - .env
+    environment:
+      TELECODEX_RUNTIME_MODE: remote-bridge
+      NODE_OPTIONS: --max-old-space-size=384
+    volumes:
+      - ./:/app:rw
+      - /app/node_modules
+      - ../bridge-state:/data/bridge-state:rw
+      - ../bridge-logs:/data/bridge-logs:rw
+    restart: unless-stopped

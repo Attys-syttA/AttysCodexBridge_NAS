@@ -32,6 +32,7 @@ describe("codex-launch", () => {
         label: "Read Only",
         sandboxMode: "read-only",
         approvalPolicy: "never",
+        capabilityMode: "safe",
         unsafe: false,
       },
       {
@@ -39,6 +40,7 @@ describe("codex-launch", () => {
         label: "Danger Full",
         sandboxMode: "danger-full-access",
         approvalPolicy: "never",
+        capabilityMode: "safe",
         unsafe: true,
       },
     ]);
@@ -112,6 +114,7 @@ describe("codex-launch", () => {
         label: "Default",
         sandboxMode: "workspace-write",
         approvalPolicy: "never",
+        capabilityMode: "safe",
         unsafe: false,
       },
       {
@@ -119,6 +122,7 @@ describe("codex-launch", () => {
         label: "Read Only",
         sandboxMode: "read-only",
         approvalPolicy: "never",
+        capabilityMode: "safe",
         unsafe: false,
       },
       {
@@ -126,6 +130,15 @@ describe("codex-launch", () => {
         label: "Review",
         sandboxMode: "workspace-write",
         approvalPolicy: "on-request",
+        capabilityMode: "safe",
+        unsafe: false,
+      },
+      {
+        id: "github-write",
+        label: "GitHub Write",
+        sandboxMode: "workspace-write",
+        approvalPolicy: "on-request",
+        capabilityMode: "github-write",
         unsafe: false,
       },
     ]);
@@ -140,6 +153,7 @@ describe("codex-launch", () => {
         label: "Default",
         sandboxMode: "workspace-write",
         approvalPolicy: "never",
+        capabilityMode: "safe",
         unsafe: false,
       },
       {
@@ -147,6 +161,7 @@ describe("codex-launch", () => {
         label: "Read Only",
         sandboxMode: "read-only",
         approvalPolicy: "never",
+        capabilityMode: "safe",
         unsafe: false,
       },
       {
@@ -154,6 +169,15 @@ describe("codex-launch", () => {
         label: "Review",
         sandboxMode: "workspace-write",
         approvalPolicy: "on-request",
+        capabilityMode: "safe",
+        unsafe: false,
+      },
+      {
+        id: "github-write",
+        label: "GitHub Write",
+        sandboxMode: "workspace-write",
+        approvalPolicy: "on-request",
+        capabilityMode: "github-write",
         unsafe: false,
       },
       {
@@ -161,6 +185,7 @@ describe("codex-launch", () => {
         label: "Full Access",
         sandboxMode: "danger-full-access",
         approvalPolicy: "never",
+        capabilityMode: "github-write",
         unsafe: true,
       },
     ]);

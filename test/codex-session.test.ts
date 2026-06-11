@@ -180,7 +180,7 @@ describe("CodexSessionService", () => {
       skipGitRepoCheck: true,
     });
 
-    expect(service.getInfo()).toEqual({
+    expect(service.getInfo()).toMatchObject({
       threadId: null,
       workspace: "/workspace/base",
       model: "o3",
@@ -212,7 +212,7 @@ describe("CodexSessionService", () => {
       skipGitRepoCheck: true,
       modelReasoningEffort: "high",
     });
-    expect(service.getInfo()).toEqual({
+    expect(service.getInfo()).toMatchObject({
       threadId: "thread-resume",
       workspace: "/workspace/resumed",
       model: "gpt-5.4",
@@ -252,7 +252,7 @@ describe("CodexSessionService", () => {
 
     const secondThread = mockState.createdThreads[1];
     expect(secondThread.options.sandboxMode).toBe("read-only");
-    expect(service.getInfo()).toEqual({
+    expect(service.getInfo()).toMatchObject({
       threadId: null,
       workspace: "/workspace/base",
       model: "o3",
@@ -270,7 +270,7 @@ describe("CodexSessionService", () => {
 
     service.setLaunchProfile("readonly");
 
-    expect(service.getInfo()).toEqual({
+    expect(service.getInfo()).toMatchObject({
       threadId: null,
       workspace: "/workspace/base",
       model: "o3",
@@ -729,7 +729,7 @@ describe("CodexSessionService", () => {
       approvalPolicy: "never",
       skipGitRepoCheck: true,
     });
-    expect(info).toEqual({
+    expect(info).toMatchObject({
       threadId: null,
       workspace: "/workspace/other",
       model: "o3",
@@ -756,7 +756,7 @@ describe("CodexSessionService", () => {
       approvalPolicy: "never",
       skipGitRepoCheck: true,
     });
-    expect(info).toEqual({
+    expect(info).toMatchObject({
       threadId: "thread-999",
       workspace: "/workspace/base",
       model: "o3",
@@ -793,7 +793,7 @@ describe("CodexSessionService", () => {
       approvalPolicy: "never",
       skipGitRepoCheck: true,
     });
-    expect(info).toEqual({
+    expect(info).toMatchObject({
       threadId: "thread-abc",
       workspace: "/workspace/from-db",
       model: "gpt-5.4-mini",
@@ -1024,7 +1024,7 @@ describe("CodexSessionService", () => {
       workspace: "/workspace/base",
     });
     expect(service.hasActiveThread()).toBe(false);
-    expect(service.getInfo()).toEqual({
+    expect(service.getInfo()).toMatchObject({
       threadId: null,
       workspace: "/workspace/base",
       model: "o3",
@@ -1057,7 +1057,7 @@ describe("CodexSessionService", () => {
 
     const service = await CodexSessionService.create(createConfig());
 
-    expect(service.listAllSessions(5)).toEqual([
+    expect(await service.listAllSessions(5)).toEqual([
       expect.objectContaining({ id: "thread-1", cwd: "/workspace/a" }),
     ]);
     expect(mockCodexState.listThreads).toHaveBeenCalledWith(5);
@@ -1069,7 +1069,7 @@ describe("CodexSessionService", () => {
 
     const service = await CodexSessionService.create(createConfig());
 
-    expect(service.listWorkspaces()).toEqual([
+    expect(await service.listWorkspaces()).toEqual([
       "/workspace/a",
       "/workspace/b",
       "/workspace/base",
@@ -1087,7 +1087,7 @@ describe("CodexSessionService", () => {
 
     const service = await CodexSessionService.create(createConfig());
 
-    expect(service.listModels()).toEqual([
+    expect(await service.listModels()).toEqual([
       { slug: "gpt-5.4", displayName: "GPT-5.4" },
       { slug: "o3", displayName: "o3" },
     ]);

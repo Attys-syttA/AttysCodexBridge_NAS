@@ -1,11 +1,13 @@
 export type CodexSandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 export type CodexApprovalPolicy = "never" | "on-request" | "on-failure" | "untrusted";
+export type CodexCapabilityMode = "safe" | "github-write";
 
 export interface CodexLaunchProfile {
   id: string;
   label: string;
   sandboxMode: CodexSandboxMode;
   approvalPolicy: CodexApprovalPolicy;
+  capabilityMode: CodexCapabilityMode;
   unsafe: boolean;
 }
 
@@ -19,14 +21,20 @@ export function isCodexApprovalPolicy(value: string): value is CodexApprovalPoli
   return value === "never" || value === "on-request" || value === "on-failure" || value === "untrusted";
 }
 
+export function isCodexCapabilityMode(value: string): value is CodexCapabilityMode {
+  return value === "safe" || value === "github-write";
+}
+
 export function createLaunchProfile(input: {
   id: string;
   label: string;
   sandboxMode: CodexSandboxMode;
   approvalPolicy: CodexApprovalPolicy;
+  capabilityMode?: CodexCapabilityMode;
 }): CodexLaunchProfile {
   return {
     ...input,
+    capabilityMode: input.capabilityMode ?? "safe",
     unsafe: isUnsafeLaunchProfile(input.sandboxMode),
   };
 }
@@ -40,6 +48,7 @@ export function createDefaultLaunchProfile(
     label: "Default",
     sandboxMode,
     approvalPolicy,
+    capabilityMode: "safe",
   });
 }
 
@@ -54,12 +63,21 @@ export function createBuiltinLaunchProfiles(
       label: "Read Only",
       sandboxMode: "read-only",
       approvalPolicy: "never",
+      capabilityMode: "safe",
     }),
     createLaunchProfile({
       id: "review",
       label: "Review",
       sandboxMode: "workspace-write",
       approvalPolicy: "on-request",
+      capabilityMode: "safe",
+    }),
+    createLaunchProfile({
+      id: "github-write",
+      label: "GitHub Write",
+      sandboxMode: "workspace-write",
+      approvalPolicy: "on-request",
+      capabilityMode: "github-write",
     }),
   ];
 
@@ -70,6 +88,7 @@ export function createBuiltinLaunchProfiles(
         label: "Full Access",
         sandboxMode: "danger-full-access",
         approvalPolicy: "never",
+        capabilityMode: "github-write",
       }),
     );
   }
@@ -108,10 +127,14 @@ export function formatLaunchProfileBehavior(profile: Pick<CodexLaunchProfile, "s
   return `${profile.sandboxMode} / ${profile.approvalPolicy}`;
 }
 
+export function formatCapabilityMode(mode: CodexCapabilityMode): string {
+  return mode === "github-write" ? "GitHub write" : "safe";
+}
+
 export function formatLaunchProfileLabel(profile: CodexLaunchProfile, isCurrent = false): string {
-  const prefix = profile.unsafe ? "⚠️" : "🛡️";
+  const prefix = profile.unsafe ? "⚠️" : "🛇";
   const selected = isCurrent ? " ✓" : "";
-  return `${prefix} ${profile.label} · ${formatLaunchProfileBehavior(profile)}${selected}`;
+  return `${prefix} ${profile.label} · ${formatLaunchProfileBehavior(profile)} · ${formatCapabilityMode(profile.capabilityMode)}${selected}`;
 }
 
 export function isUnsafeLaunchProfile(
@@ -151,11 +174,19 @@ function parseLaunchProfileEntry(entry: unknown, index: number): CodexLaunchProf
     );
   }
 
+  const rawCapabilityMode = readOptionalStringField(entry, "capabilityMode");
+  if (rawCapabilityMode !== undefined && !isCodexCapabilityMode(rawCapabilityMode)) {
+    throw new Error(
+      `Invalid CODEX_LAUNCH_PROFILES_JSON entry at index ${index}: unsupported capabilityMode "${rawCapabilityMode}"`,
+    );
+  }
+
   return createLaunchProfile({
     id: rawId,
     label: rawLabel,
     sandboxMode: rawSandboxMode,
     approvalPolicy: rawApprovalPolicy,
+    ...(rawCapabilityMode ? { capabilityMode: rawCapabilityMode } : {}),
   });
 }
 
@@ -167,4 +198,14 @@ function readStringField(entry: object, field: string, index: number): string {
     );
   }
   return value.trim();
+}
+
+function readOptionalStringField(entry: object, field: string): string | undefined {
+  const value = Reflect.get(entry, field);
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed || undefined;
 }

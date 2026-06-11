@@ -14,12 +14,18 @@ export function normalizeWorkspacePath(config: TeleCodexConfig, workspace: strin
   }
 
   const resolved = isWindowsDrivePath(raw) || path.isAbsolute(raw) ? path.normalize(raw) : path.resolve(raw);
+  if (isWindowsDrivePath(raw)) {
+    const remapped = remapIntoWorkspaceRoot(config.workspaceRoot, path.win32.normalize(raw));
+    if (remapped) {
+      return remapped;
+    }
+  }
+
   if (existsSync(resolved)) {
     return resolved;
   }
 
-  const remapped = isWindowsDrivePath(raw) ? remapIntoWorkspaceRoot(config.workspaceRoot, path.win32.normalize(raw)) : null;
-  return remapped ?? resolved;
+  return resolved;
 }
 
 export function normalizeWorkspaceList(config: TeleCodexConfig, workspaces: string[]): string[] {

@@ -1,6 +1,9 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 
+import type { TeleCodexConfig } from "./config.js";
+import { RemoteWorkerClient } from "./remote-worker-client.js";
+
 export interface AuthStatus {
   authenticated: boolean;
   method: "api-key" | "cli" | "none";
@@ -28,7 +31,15 @@ let cachedAuthStatus: { status: AuthStatus; expiresAt: number } | undefined;
  *
  * Results are cached for 30 seconds to avoid per-message CLI invocations.
  */
-export async function checkAuthStatus(apiKey?: string): Promise<AuthStatus> {
+export async function checkAuthStatus(
+  apiKey?: string,
+  config?: TeleCodexConfig,
+  workerId?: string,
+): Promise<AuthStatus> {
+  if (isRemoteBridgeMode(config)) {
+    return createRemoteClient(config, workerId).checkAuthStatus();
+  }
+
   if (apiKey) {
     return {
       authenticated: true,
@@ -69,7 +80,11 @@ export function clearAuthCache(): void {
  * Attempt to start a login flow via the Codex CLI.
  * Uses --device-auth to get a device code flow suitable for headless/remote hosts.
  */
-export async function startLogin(): Promise<LoginResult> {
+export async function startLogin(config?: TeleCodexConfig, workerId?: string): Promise<LoginResult> {
+  if (isRemoteBridgeMode(config)) {
+    return createRemoteClient(config, workerId).startLogin();
+  }
+
   clearAuthCache();
 
   try {
@@ -91,7 +106,11 @@ export async function startLogin(): Promise<LoginResult> {
 /**
  * Attempt to logout via the Codex CLI.
  */
-export async function startLogout(): Promise<LoginResult> {
+export async function startLogout(config?: TeleCodexConfig, workerId?: string): Promise<LoginResult> {
+  if (isRemoteBridgeMode(config)) {
+    return createRemoteClient(config, workerId).startLogout();
+  }
+
   clearAuthCache();
 
   try {
@@ -229,4 +248,45 @@ function extractErrorMessage(error: unknown): string {
     }
   }
   return error instanceof Error ? error.message : String(error);
+}
+
+function isRemoteBridgeMode(config?: TeleCodexConfig): boolean {
+  return (config?.runtimeMode ?? process.env.TELECODEX_RUNTIME_MODE) === "remote-bridge";
+}
+
+function createRemoteClient(config?: TeleCodexConfig, workerId?: string): RemoteWorkerClient {
+  const remoteConfig = config ?? {
+    telegramBotToken: "",
+    telegramAllowedUserIds: [],
+    telegramAllowedUserIdSet: new Set<number>(),
+    hostLabel: "",
+    hostName: "",
+    userName: "",
+    workspace: process.cwd(),
+    stateDir: process.cwd(),
+    maxFileSize: 20 * 1024 * 1024,
+    codexSandboxMode: "workspace-write",
+    codexApprovalPolicy: "never",
+    launchProfiles: [],
+    defaultLaunchProfileId: "default",
+    enableUnsafeLaunchProfiles: false,
+    runtimeMode: "remote-bridge",
+    workers: [],
+    defaultWorkerId: undefined,
+    workerBaseUrl: process.env.TELECODEX_WORKER_BASE_URL,
+    workerSharedSecret: process.env.TELECODEX_WORKER_SHARED_SECRET,
+    workerTimeoutMs: Number.parseInt(process.env.TELECODEX_WORKER_TIMEOUT_MS ?? "120000", 10),
+    toolVerbosity: "summary",
+    showTurnTokenUsage: false,
+    enableTelegramLogin: true,
+    enableTelegramReactions: false,
+    telegramApiTimeoutMs: 20_000,
+    telegramEditDebounceMs: 5_000,
+    telegramTypingIntervalMs: 30_000,
+    codexNoOutputStatusMs: 5 * 60_000,
+    codexTurnHardTimeoutMs: 60 * 60_000,
+    vscHandoffDirectResumeMaxSessionBytes: 20 * 1024 * 1024,
+  };
+
+  return new RemoteWorkerClient(remoteConfig, workerId);
 }
