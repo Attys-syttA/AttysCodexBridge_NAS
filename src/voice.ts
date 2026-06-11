@@ -3,6 +3,9 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { readFile } from "node:fs/promises";
 
+import type { TeleCodexConfig } from "./config.js";
+import { RemoteWorkerClient } from "./remote-worker-client.js";
+
 export interface TranscriptionResult {
   text: string;
   backend: "parakeet" | "openai";
@@ -47,7 +50,15 @@ export function _resetImportHook(): void {
   _engine = null;
 }
 
-export async function transcribeAudio(filePath: string): Promise<TranscriptionResult> {
+export async function transcribeAudio(
+  filePath: string,
+  config?: TeleCodexConfig,
+  workerId?: string,
+): Promise<TranscriptionResult> {
+  if (isRemoteBridgeMode(config)) {
+    return createRemoteClient(config, workerId).transcribeAudio(filePath);
+  }
+
   try {
     const parakeetMod = await _importModule(PARAKEET_SPECIFIER);
     return await transcribeWithParakeet(filePath, parakeetMod);
@@ -64,7 +75,14 @@ export async function transcribeAudio(filePath: string): Promise<TranscriptionRe
   throw new Error(NO_BACKEND_ERROR);
 }
 
-export async function getAvailableBackends(): Promise<TranscriptionBackend[]> {
+export async function getAvailableBackends(
+  config?: TeleCodexConfig,
+  workerId?: string,
+): Promise<TranscriptionBackend[]> {
+  if (isRemoteBridgeMode(config)) {
+    return createRemoteClient(config, workerId).getVoiceBackends();
+  }
+
   const backends: TranscriptionBackend[] = [];
 
   try {
@@ -264,4 +282,45 @@ function isModuleNotFoundError(error: unknown, specifier: string): boolean {
     message.includes(`Cannot find module '${specifier}'`) ||
     message.includes(`Cannot resolve module '${specifier}'`)
   );
+}
+
+function isRemoteBridgeMode(config?: TeleCodexConfig): boolean {
+  return (config?.runtimeMode ?? process.env.TELECODEX_RUNTIME_MODE) === "remote-bridge";
+}
+
+function createRemoteClient(config?: TeleCodexConfig, workerId?: string): RemoteWorkerClient {
+  const remoteConfig = config ?? {
+    telegramBotToken: "",
+    telegramAllowedUserIds: [],
+    telegramAllowedUserIdSet: new Set<number>(),
+    hostLabel: "",
+    hostName: "",
+    userName: "",
+    workspace: process.cwd(),
+    stateDir: process.cwd(),
+    maxFileSize: 20 * 1024 * 1024,
+    codexSandboxMode: "workspace-write",
+    codexApprovalPolicy: "never",
+    launchProfiles: [],
+    defaultLaunchProfileId: "default",
+    enableUnsafeLaunchProfiles: false,
+    runtimeMode: "remote-bridge",
+    workers: [],
+    defaultWorkerId: undefined,
+    workerBaseUrl: process.env.TELECODEX_WORKER_BASE_URL,
+    workerSharedSecret: process.env.TELECODEX_WORKER_SHARED_SECRET,
+    workerTimeoutMs: Number.parseInt(process.env.TELECODEX_WORKER_TIMEOUT_MS ?? "120000", 10),
+    toolVerbosity: "summary",
+    showTurnTokenUsage: false,
+    enableTelegramLogin: true,
+    enableTelegramReactions: false,
+    telegramApiTimeoutMs: 20_000,
+    telegramEditDebounceMs: 5_000,
+    telegramTypingIntervalMs: 30_000,
+    codexNoOutputStatusMs: 5 * 60_000,
+    codexTurnHardTimeoutMs: 60 * 60_000,
+    vscHandoffDirectResumeMaxSessionBytes: 20 * 1024 * 1024,
+  };
+
+  return new RemoteWorkerClient(remoteConfig, workerId);
 }

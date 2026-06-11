@@ -107,13 +107,15 @@ const HELP_TOPICS: HelpTopic[] = [
   },
   {
     title: "/launch_profiles, /model, /effort — új szálak beállításai",
-    aliases: ["launch", "launch_profiles", "model", "effort"],
+    aliases: ["launch", "launch_profiles", "model", "effort", "workers", "worker"],
     lines: [
       "Ezek a beállítások főleg új vagy újracsatolt threadekre érvényesek.",
       "/launch_profiles: sandbox és approval profil választása.",
+      "/workers: worker gép választása ugyanahhoz a Telegram beszélgetéshez.",
       "/model: modell választása új threadekhez.",
       "/effort: reasoning effort választása új threadekhez.",
       "Ha egy aktív thread már fut, a /session mutatja, hogy mi az aktív és mi lesz a következő beállítás.",
+      "Worker váltáskor a következő kérés már az új gépre megy, a régi thread viszont a korábbi worker gépen marad.",
     ],
   },
   {
@@ -165,6 +167,7 @@ export function renderHelpMessage(): DualText {
       title: "🤖 Modell",
       commands: [
         ["/launch_profiles", "Indítási profil kiválasztása"],
+        ["/workers", "Worker gép kiválasztása"],
         ["/model", "Modell megtekintése és váltása"],
         ["/effort", "Reasoning effort beállítása"],
       ],

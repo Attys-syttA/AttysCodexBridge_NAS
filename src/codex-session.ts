@@ -50,10 +50,14 @@ export interface CodexSessionInfo {
   launchProfileBehavior: string;
   sandboxMode: string;
   approvalPolicy: string;
+  capabilityMode: string;
+  githubWriteEnabled: boolean;
   unsafeLaunch: boolean;
   nextLaunchProfileId?: string;
   nextLaunchProfileLabel?: string;
   nextLaunchProfileBehavior?: string;
+  nextCapabilityMode?: string;
+  nextGithubWriteEnabled?: boolean;
   nextUnsafeLaunch?: boolean;
   sessionTokens?: {
     input: number;
@@ -74,8 +78,17 @@ export interface CreateOptions {
 export type CodexPromptInput = string | {
   text?: string;
   imagePaths?: string[];
+  stagedFiles?: Array<{
+    originalName: string;
+    safeName: string;
+    localPath: string;
+    mimeType: string;
+    sizeBytes: number;
+  }>;
   stagedFileInstructions?: string;
   policyPreamble?: string;
+  outDir?: string;
+  turnId?: string;
 };
 
 export interface SwitchSessionOptions {
@@ -85,7 +98,30 @@ export interface SwitchSessionOptions {
   ignoreStoredModel?: boolean;
 }
 
-export class CodexSessionService {
+export interface CodexSessionRuntime {
+  getInfo(): CodexSessionInfo;
+  getWorkerTargetId(): string | undefined;
+  isProcessing(): boolean;
+  hasActiveThread(): boolean;
+  getCurrentWorkspace(): string;
+  prompt(input: CodexPromptInput, callbacks: CodexSessionCallbacks): Promise<void>;
+  abort(): Promise<void>;
+  newThread(workspace?: string, model?: string): Promise<CodexSessionInfo>;
+  resumeThread(threadId: string): Promise<CodexSessionInfo>;
+  switchSession(threadId: string, options?: string | SwitchSessionOptions): Promise<CodexSessionInfo>;
+  listAllSessions(limit?: number): Promise<CodexThreadRecord[]>;
+  listWorkspaces(): Promise<string[]>;
+  listModels(): Promise<CodexModelRecord[]>;
+  setModel(slug: string): string;
+  setReasoningEffort(effort: ModelReasoningEffort): void;
+  setLaunchProfile(profileId: string): CodexLaunchProfile;
+  getSelectedLaunchProfile(): CodexLaunchProfile;
+  escalateLaunchProfile(profileId: string): Promise<CodexSessionInfo>;
+  handback(): { threadId: string | null; workspace: string };
+  dispose(): void;
+}
+
+export class CodexSessionService implements CodexSessionRuntime {
   private codex: Codex | null = null;
   private thread: Thread | null = null;
   private currentWorkspace: string;
@@ -137,6 +173,8 @@ export class CodexSessionService {
       launchProfileBehavior: formatLaunchProfileBehavior(effectiveLaunchProfile),
       sandboxMode: effectiveLaunchProfile.sandboxMode,
       approvalPolicy: effectiveLaunchProfile.approvalPolicy,
+      capabilityMode: effectiveLaunchProfile.capabilityMode,
+      githubWriteEnabled: effectiveLaunchProfile.capabilityMode === "github-write",
       unsafeLaunch: effectiveLaunchProfile.unsafe,
     };
 
@@ -151,6 +189,8 @@ export class CodexSessionService {
       info.nextLaunchProfileId = this.currentLaunchProfile.id;
       info.nextLaunchProfileLabel = this.currentLaunchProfile.label;
       info.nextLaunchProfileBehavior = formatLaunchProfileBehavior(this.currentLaunchProfile);
+      info.nextCapabilityMode = this.currentLaunchProfile.capabilityMode;
+      info.nextGithubWriteEnabled = this.currentLaunchProfile.capabilityMode === "github-write";
       info.nextUnsafeLaunch = this.currentLaunchProfile.unsafe;
     }
 
@@ -159,6 +199,10 @@ export class CodexSessionService {
     }
 
     return info;
+  }
+
+  getWorkerTargetId(): string | undefined {
+    return undefined;
   }
 
   isProcessing(): boolean {
@@ -359,11 +403,11 @@ export class CodexSessionService {
     return this.getInfo();
   }
 
-  listAllSessions(limit?: number): CodexThreadRecord[] {
+  async listAllSessions(limit?: number): Promise<CodexThreadRecord[]> {
     return listThreads(limit ?? 20);
   }
 
-  listWorkspaces(): string[] {
+  async listWorkspaces(): Promise<string[]> {
     const threadWorkspaces = listWorkspaces();
     const discoveredWorkspaces = discoverWorkspaceDirectories(this.config.workspaceRoot);
     return normalizeWorkspaceList(this.config, [
@@ -373,7 +417,7 @@ export class CodexSessionService {
     ]);
   }
 
-  listModels(): CodexModelRecord[] {
+  async listModels(): Promise<CodexModelRecord[]> {
     return listModels();
   }
 
@@ -394,6 +438,19 @@ export class CodexSessionService {
 
   getSelectedLaunchProfile(): CodexLaunchProfile {
     return this.currentLaunchProfile;
+  }
+
+  async escalateLaunchProfile(profileId: string): Promise<CodexSessionInfo> {
+    this.ensureIdle("escalate launch profile");
+    this.currentLaunchProfile = getLaunchProfile(this.config, profileId);
+    this.resetCodexClient();
+
+    if (!this.currentThreadId) {
+      this.activeThreadLaunchProfile = this.currentLaunchProfile;
+      return this.getInfo();
+    }
+
+    return this.resumeThread(this.currentThreadId);
   }
 
   handback(): { threadId: string | null; workspace: string } {

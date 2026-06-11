@@ -7,14 +7,24 @@ import {
   createDefaultLaunchProfile,
   findLaunchProfile,
   isCodexApprovalPolicy,
+  isCodexCapabilityMode,
   isCodexSandboxMode,
   parseLaunchProfilesJson,
   type CodexApprovalPolicy,
+  type CodexCapabilityMode,
   type CodexLaunchProfile,
   type CodexSandboxMode,
 } from "./codex-launch.js";
 
 export type ToolVerbosity = "all" | "summary" | "errors-only" | "none";
+export type RuntimeMode = "local" | "remote-bridge" | "remote-worker";
+
+export interface WorkerTarget {
+  id: string;
+  label: string;
+  baseUrl: string;
+  sharedSecret?: string;
+}
 
 export interface TeleCodexConfig {
   telegramBotToken: string;
@@ -34,6 +44,12 @@ export interface TeleCodexConfig {
   launchProfiles: CodexLaunchProfile[];
   defaultLaunchProfileId: string;
   enableUnsafeLaunchProfiles: boolean;
+  runtimeMode: RuntimeMode;
+  workers: WorkerTarget[];
+  defaultWorkerId?: string;
+  workerBaseUrl?: string;
+  workerSharedSecret?: string;
+  workerTimeoutMs: number;
   toolVerbosity: ToolVerbosity;
   showTurnTokenUsage: boolean;
   enableTelegramLogin: boolean;
@@ -79,6 +95,19 @@ export function loadConfig(): TeleCodexConfig {
     launchProfiles,
   );
   const toolVerbosity = parseToolVerbosity(optionalString(process.env.TOOL_VERBOSITY));
+  const runtimeMode = parseRuntimeMode(optionalString(process.env.TELECODEX_RUNTIME_MODE));
+  const workerBaseUrl = optionalString(process.env.TELECODEX_WORKER_BASE_URL);
+  const workerSharedSecret = optionalString(process.env.TELECODEX_WORKER_SHARED_SECRET);
+  const workers = parseWorkerTargets(optionalString(process.env.TELECODEX_WORKERS_JSON), {
+    workerBaseUrl,
+    workerSharedSecret,
+  });
+  const defaultWorkerId = parseDefaultWorkerId(optionalString(process.env.TELECODEX_DEFAULT_WORKER_ID), workers);
+  const workerTimeoutMs = parsePositiveIntegerEnv(
+    optionalString(process.env.TELECODEX_WORKER_TIMEOUT_MS),
+    120_000,
+    "TELECODEX_WORKER_TIMEOUT_MS",
+  );
   const showTurnTokenUsage = parseBooleanEnv(optionalString(process.env.SHOW_TURN_TOKEN_USAGE), false);
   const enableTelegramLogin = parseBooleanEnv(optionalString(process.env.ENABLE_TELEGRAM_LOGIN), true);
   const enableTelegramReactions = parseBooleanEnv(
@@ -134,6 +163,12 @@ export function loadConfig(): TeleCodexConfig {
     launchProfiles,
     defaultLaunchProfileId,
     enableUnsafeLaunchProfiles,
+    runtimeMode,
+    workers,
+    defaultWorkerId,
+    workerBaseUrl,
+    workerSharedSecret,
+    workerTimeoutMs,
     toolVerbosity,
     showTurnTokenUsage,
     enableTelegramLogin,
@@ -145,6 +180,49 @@ export function loadConfig(): TeleCodexConfig {
     codexTurnHardTimeoutMs,
     vscHandoffDirectResumeMaxSessionBytes,
   };
+}
+
+export function getDefaultGithubWriteProfileId(config: Pick<TeleCodexConfig, "launchProfiles">): string | undefined {
+  return config.launchProfiles.find((profile) => profile.capabilityMode === "github-write")?.id;
+}
+
+export function resolveWorkerTarget(
+  config: Pick<TeleCodexConfig, "workers" | "defaultWorkerId" | "workerBaseUrl" | "workerSharedSecret">,
+  workerId?: string,
+): WorkerTarget | undefined {
+  const requestedId = workerId?.trim() || config.defaultWorkerId;
+  if (requestedId) {
+    const matched = config.workers.find((worker) => worker.id === requestedId);
+    if (matched) {
+      return matched;
+    }
+  }
+
+  if (config.workers.length > 0) {
+    return config.workers[0];
+  }
+
+  if (!config.workerBaseUrl?.trim()) {
+    return undefined;
+  }
+
+  return {
+    id: "default",
+    label: "Default Worker",
+    baseUrl: config.workerBaseUrl,
+    sharedSecret: config.workerSharedSecret,
+  };
+}
+
+export function getWorkerLabel(
+  config: Pick<TeleCodexConfig, "workers" | "defaultWorkerId" | "workerBaseUrl" | "workerSharedSecret">,
+  workerId?: string,
+): string {
+  const target = resolveWorkerTarget(config, workerId);
+  if (!target) {
+    return "helyi";
+  }
+  return `${target.label} (${target.baseUrl})`;
 }
 
 /**
@@ -352,6 +430,103 @@ function parseToolVerbosity(raw: string | undefined): ToolVerbosity {
       );
       return "summary";
   }
+}
+
+function parseRuntimeMode(raw: string | undefined): RuntimeMode {
+  if (!raw) {
+    return "local";
+  }
+
+  switch (raw) {
+    case "local":
+    case "remote-bridge":
+    case "remote-worker":
+      return raw;
+    default:
+      console.warn(
+        `Invalid TELECODEX_RUNTIME_MODE value: "${raw}". Expected one of: local, remote-bridge, remote-worker. Falling back to "local".`,
+      );
+      return "local";
+  }
+}
+
+function parseWorkerTargets(
+  raw: string | undefined,
+  fallback: { workerBaseUrl?: string; workerSharedSecret?: string },
+): WorkerTarget[] {
+  if (!raw) {
+    if (!fallback.workerBaseUrl) {
+      return [];
+    }
+
+    return [
+      {
+        id: "default",
+        label: "Default Worker",
+        baseUrl: fallback.workerBaseUrl,
+        sharedSecret: fallback.workerSharedSecret,
+      },
+    ];
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(
+      `Invalid TELECODEX_WORKERS_JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  if (!Array.isArray(parsed)) {
+    throw new Error("Invalid TELECODEX_WORKERS_JSON: expected a JSON array");
+  }
+
+  const seenIds = new Set<string>();
+  return parsed.map((entry, index) => {
+    if (!entry || typeof entry !== "object") {
+      throw new Error(`Invalid TELECODEX_WORKERS_JSON entry at index ${index}: expected an object`);
+    }
+
+    const record = entry as Record<string, unknown>;
+    const id = parseWorkerString(record.id, `TELECODEX_WORKERS_JSON[${index}].id`);
+    const label = parseWorkerString(record.label, `TELECODEX_WORKERS_JSON[${index}].label`);
+    const baseUrl = parseWorkerString(record.baseUrl, `TELECODEX_WORKERS_JSON[${index}].baseUrl`);
+    const sharedSecret = optionalWorkerString(record.sharedSecret);
+
+    if (seenIds.has(id)) {
+      throw new Error(`Duplicate worker id in TELECODEX_WORKERS_JSON: ${id}`);
+    }
+    seenIds.add(id);
+
+    return { id, label, baseUrl, sharedSecret };
+  });
+}
+
+function parseDefaultWorkerId(raw: string | undefined, workers: WorkerTarget[]): string | undefined {
+  if (!raw) {
+    return workers[0]?.id;
+  }
+
+  const matched = workers.find((worker) => worker.id === raw);
+  if (!matched) {
+    throw new Error(`Unknown TELECODEX_DEFAULT_WORKER_ID: ${raw}`);
+  }
+  return matched.id;
+}
+
+function parseWorkerString(value: unknown, name: string): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`Invalid ${name}: expected a non-empty string`);
+  }
+  return value.trim();
+}
+
+function optionalWorkerString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  return optionalString(value);
 }
 
 function parseLaunchProfiles(

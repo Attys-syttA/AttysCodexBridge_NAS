@@ -5,6 +5,7 @@ import { loadConfig } from "./config.js";
 import { createRuntimeHealthMonitor, type RuntimeHealthMonitor } from "./health.js";
 import { clearBotControlRequest } from "./process-control.js";
 import { SessionRegistry } from "./session-registry.js";
+import { startWorkerServer } from "./worker-server.js";
 
 let registry: SessionRegistry | undefined;
 let bot: ReturnType<typeof createBot> | undefined;
@@ -15,15 +16,37 @@ try {
   await clearBotControlRequest(config, "stop");
   health = createRuntimeHealthMonitor(config);
   health.markStarted();
+
+  if (config.runtimeMode === "remote-worker") {
+    const server = startWorkerServer(config, health);
+    const port = Number.parseInt(process.env.TELECODEX_WORKER_PORT ?? "8787", 10);
+    server.listen(port, () => {
+      console.log(`AttysCodexBridge worker running on port ${port}`);
+      console.log(`State dir: ${config.stateDir}`);
+      console.log(`Workspace: ${config.workspace}`);
+    });
+    process.once("SIGINT", () => server.close());
+    process.once("SIGTERM", () => server.close());
+    await new Promise(() => {});
+  }
+
   registry = new SessionRegistry(config);
   bot = createBot(config, registry, health);
   await registerCommands(bot);
 
   console.log("AttysCodexBridge running");
-  const authStatus = await checkAuthStatus(config.codexApiKey);
-  console.log(`Auth: ${authStatus.authenticated ? "authenticated" : "not authenticated"} (${authStatus.method})`);
-  if (!authStatus.authenticated) {
-    console.warn("Warning: Codex is not authenticated. Use /login or set CODEX_API_KEY.");
+  try {
+    const authStatus = await checkAuthStatus(config.codexApiKey, config);
+    console.log(`Auth: ${authStatus.authenticated ? "authenticated" : "not authenticated"} (${authStatus.method})`);
+    if (!authStatus.authenticated) {
+      console.warn("Warning: Codex is not authenticated. Use /login or set CODEX_API_KEY.");
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`Warning: startup auth check failed: ${message}`);
+    if (config.runtimeMode === "remote-bridge") {
+      console.warn("Warning: remote worker is currently unreachable. Bridge will stay online and you can retry later.");
+    }
   }
   console.log(`Workspace: ${config.workspace}`);
   if (config.workspaceRoot) {

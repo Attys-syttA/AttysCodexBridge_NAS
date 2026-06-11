@@ -9,6 +9,7 @@ dist/
 
 # Runtime state
 .telecodex/
+.telecodex-worker/
 telecodex.log
 telecodex-run.log
 telecodex-run.err.log
@@ -32,3 +33,6 @@ tmp_*.txt
 
 # Test coverage
 coverage/
+
+# Local NAS upload bundle
+telegram_codex_bot/

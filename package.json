@@ -21,8 +21,13 @@
   "type": "module",
   "scripts": {
     "dev": "tsx src/index.ts",
+    "dev:bridge": "tsx watch src/index.ts",
+    "dev:worker": "tsx src/index.ts",
     "build": "tsc",
+    "build:nas-bundle": "powershell -ExecutionPolicy Bypass -File ./scripts/build-nas-bundle.ps1",
     "start": "node dist/index.js",
+    "start:bridge": "node dist/index.js",
+    "start:worker": "node dist/index.js",
     "test": "vitest run"
   },
   "dependencies": {

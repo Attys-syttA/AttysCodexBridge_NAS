@@ -287,6 +287,102 @@ describe("SessionRegistry", () => {
     });
   });
 
+  it("deduplicates persisted thread ids and keeps the newest context", async () => {
+    const persistPath = path.join("/state/telecodex", "contexts.json");
+    mockFsState.files.set(
+      persistPath,
+      JSON.stringify([
+        {
+          contextKey: "123",
+          threadId: "thread-a",
+          workspace: "/workspace/a",
+          model: "o4-mini",
+          reasoningEffort: "low",
+          launchProfileId: "readonly",
+          updatedAt: 10,
+        },
+        {
+          contextKey: "123:42",
+          threadId: "thread-a",
+          workspace: "/workspace/b",
+          model: "gpt-5.4",
+          reasoningEffort: "high",
+          launchProfileId: "default",
+          updatedAt: 20,
+        },
+      ]),
+    );
+
+    const registry = new SessionRegistry(createConfig());
+
+    expect(registry.listContexts()).toEqual([
+      {
+        contextKey: "123:42",
+        threadId: "thread-a",
+        workspace: "/workspace/b",
+        model: "gpt-5.4",
+        reasoningEffort: "high",
+        launchProfileId: "default",
+        updatedAt: 20,
+      },
+    ]);
+    expect(registry.getMetadata("123")).toBeUndefined();
+    expect(registry.getMetadata("123:42")).toMatchObject({
+      contextKey: "123:42",
+      threadId: "thread-a",
+      workspace: "/workspace/b",
+      model: "gpt-5.4",
+      reasoningEffort: "high",
+      launchProfileId: "default",
+    });
+  });
+
+  it("keeps the context being updated when pruning duplicate live threads", async () => {
+    const registry = new SessionRegistry(createConfig());
+
+    const first = (await registry.getOrCreate("123")) as any;
+    first.setInfo({
+      threadId: "thread-a",
+      workspace: "/workspace/a",
+      model: "o4-mini",
+      launchProfileId: "readonly",
+      launchProfileLabel: "Read Only",
+      launchProfileBehavior: "read-only / never",
+      sandboxMode: "read-only",
+      approvalPolicy: "never",
+      unsafeLaunch: false,
+    });
+    registry.updateMetadata("123", first);
+
+    const second = (await registry.getOrCreate("123:42")) as any;
+    second.setInfo({
+      threadId: "thread-a",
+      workspace: "/workspace/b",
+      model: "gpt-5.4",
+      reasoningEffort: "high",
+      launchProfileId: "default",
+      launchProfileLabel: "Default",
+      launchProfileBehavior: "workspace-write / never",
+      sandboxMode: "workspace-write",
+      approvalPolicy: "never",
+      unsafeLaunch: false,
+    });
+    registry.updateMetadata("123:42", second);
+
+    expect(registry.has("123")).toBe(false);
+    expect(registry.has("123:42")).toBe(true);
+    expect(registry.getMetadata("123")).toBeUndefined();
+    expect(registry.getMetadata("123:42")).toMatchObject({
+      contextKey: "123:42",
+      threadId: "thread-a",
+      workspace: "/workspace/b",
+      model: "gpt-5.4",
+      reasoningEffort: "high",
+      launchProfileId: "default",
+    });
+    expect(mockSessionState.sessions[0].dispose).toHaveBeenCalledTimes(1);
+  });
+
   it("falls back to the default launch profile when persisted metadata references a missing profile", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const persistPath = path.join("/state/telecodex", "contexts.json");

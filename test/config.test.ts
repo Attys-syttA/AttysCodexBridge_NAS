@@ -31,6 +31,12 @@ describe("loadConfig", () => {
     delete process.env.MAX_FILE_SIZE;
     delete process.env.ENABLE_TELEGRAM_LOGIN;
     delete process.env.ENABLE_TELEGRAM_REACTIONS;
+    delete process.env.TELECODEX_RUNTIME_MODE;
+    delete process.env.TELECODEX_WORKERS_JSON;
+    delete process.env.TELECODEX_DEFAULT_WORKER_ID;
+    delete process.env.TELECODEX_WORKER_BASE_URL;
+    delete process.env.TELECODEX_WORKER_SHARED_SECRET;
+    delete process.env.TELECODEX_WORKER_TIMEOUT_MS;
     delete process.env.TELEGRAM_API_TIMEOUT_MS;
     delete process.env.TELEGRAM_EDIT_DEBOUNCE_MS;
     delete process.env.TELEGRAM_TYPING_INTERVAL_MS;
@@ -93,6 +99,7 @@ describe("loadConfig", () => {
           label: "Default",
           sandboxMode: "danger-full-access",
           approvalPolicy: "on-request",
+          capabilityMode: "safe",
           unsafe: true,
         },
         {
@@ -100,6 +107,7 @@ describe("loadConfig", () => {
           label: "Read Only",
           sandboxMode: "read-only",
           approvalPolicy: "never",
+          capabilityMode: "safe",
           unsafe: false,
         },
         {
@@ -107,11 +115,26 @@ describe("loadConfig", () => {
           label: "Review",
           sandboxMode: "workspace-write",
           approvalPolicy: "on-request",
+          capabilityMode: "safe",
+          unsafe: false,
+        },
+        {
+          id: "github-write",
+          label: "GitHub Write",
+          sandboxMode: "workspace-write",
+          approvalPolicy: "on-request",
+          capabilityMode: "github-write",
           unsafe: false,
         },
       ],
       defaultLaunchProfileId: "default",
       enableUnsafeLaunchProfiles: false,
+      runtimeMode: "local",
+      workers: [],
+      defaultWorkerId: undefined,
+      workerBaseUrl: undefined,
+      workerSharedSecret: undefined,
+      workerTimeoutMs: 120_000,
       toolVerbosity: "all",
       showTurnTokenUsage: false,
       enableTelegramLogin: true,
@@ -142,6 +165,7 @@ describe("loadConfig", () => {
         label: "Default",
         sandboxMode: "workspace-write",
         approvalPolicy: "never",
+        capabilityMode: "safe",
         unsafe: false,
       },
       {
@@ -149,6 +173,7 @@ describe("loadConfig", () => {
         label: "Read Only",
         sandboxMode: "read-only",
         approvalPolicy: "never",
+        capabilityMode: "safe",
         unsafe: false,
       },
       {
@@ -156,11 +181,22 @@ describe("loadConfig", () => {
         label: "Review",
         sandboxMode: "workspace-write",
         approvalPolicy: "on-request",
+        capabilityMode: "safe",
+        unsafe: false,
+      },
+      {
+        id: "github-write",
+        label: "GitHub Write",
+        sandboxMode: "workspace-write",
+        approvalPolicy: "on-request",
+        capabilityMode: "github-write",
         unsafe: false,
       },
     ]);
     expect(config.defaultLaunchProfileId).toBe("default");
     expect(config.enableUnsafeLaunchProfiles).toBe(false);
+    expect(config.workers).toEqual([]);
+    expect(config.defaultWorkerId).toBeUndefined();
     expect(config.toolVerbosity).toBe("summary");
     expect(config.showTurnTokenUsage).toBe(false);
     expect(config.enableTelegramLogin).toBe(true);
@@ -226,6 +262,7 @@ describe("loadConfig", () => {
         label: "Default",
         sandboxMode: "read-only",
         approvalPolicy: "on-failure",
+        capabilityMode: "safe",
         unsafe: false,
       },
       {
@@ -233,6 +270,7 @@ describe("loadConfig", () => {
         label: "Read Only",
         sandboxMode: "read-only",
         approvalPolicy: "never",
+        capabilityMode: "safe",
         unsafe: false,
       },
       {
@@ -240,6 +278,15 @@ describe("loadConfig", () => {
         label: "Review",
         sandboxMode: "workspace-write",
         approvalPolicy: "on-request",
+        capabilityMode: "safe",
+        unsafe: false,
+      },
+      {
+        id: "github-write",
+        label: "GitHub Write",
+        sandboxMode: "workspace-write",
+        approvalPolicy: "on-request",
+        capabilityMode: "github-write",
         unsafe: false,
       },
     ]);
@@ -272,6 +319,45 @@ describe("loadConfig", () => {
     expect(config.workspaceRoot).toBe(path.resolve(workspaceRoot));
     expect(config.workspace).toBe(path.resolve(defaultWorkspace));
     expect(config.stateDir).toBe(path.resolve(stateDir));
+  });
+
+  it("parses multiple remote worker targets", () => {
+    process.env.TELEGRAM_BOT_TOKEN = "bot-token";
+    process.env.TELEGRAM_ALLOWED_USER_IDS = "123";
+    process.env.TELECODEX_RUNTIME_MODE = "remote-bridge";
+    process.env.TELECODEX_WORKERS_JSON = JSON.stringify([
+      {
+        id: "munkahely",
+        label: "Munkahely",
+        baseUrl: "http://192.168.1.50:8787",
+        sharedSecret: "secret-a",
+      },
+      {
+        id: "otthon",
+        label: "Otthon",
+        baseUrl: "http://192.168.1.60:8787",
+      },
+    ]);
+    process.env.TELECODEX_DEFAULT_WORKER_ID = "munkahely";
+
+    const config = loadConfig();
+
+    expect(config.runtimeMode).toBe("remote-bridge");
+    expect(config.defaultWorkerId).toBe("munkahely");
+    expect(config.workers).toEqual([
+      {
+        id: "munkahely",
+        label: "Munkahely",
+        baseUrl: "http://192.168.1.50:8787",
+        sharedSecret: "secret-a",
+      },
+      {
+        id: "otthon",
+        label: "Otthon",
+        baseUrl: "http://192.168.1.60:8787",
+        sharedSecret: undefined,
+      },
+    ]);
   });
 
   it("parses an explicit host label", () => {
@@ -438,6 +524,7 @@ describe("loadConfig", () => {
         label: "Default",
         sandboxMode: "workspace-write",
         approvalPolicy: "never",
+        capabilityMode: "safe",
         unsafe: false,
       },
       {
@@ -445,6 +532,7 @@ describe("loadConfig", () => {
         label: "Workspace Read Only",
         sandboxMode: "read-only",
         approvalPolicy: "never",
+        capabilityMode: "safe",
         unsafe: false,
       },
       {
@@ -452,6 +540,15 @@ describe("loadConfig", () => {
         label: "Review",
         sandboxMode: "workspace-write",
         approvalPolicy: "on-request",
+        capabilityMode: "safe",
+        unsafe: false,
+      },
+      {
+        id: "github-write",
+        label: "GitHub Write",
+        sandboxMode: "workspace-write",
+        approvalPolicy: "on-request",
+        capabilityMode: "github-write",
         unsafe: false,
       },
       {
@@ -459,6 +556,7 @@ describe("loadConfig", () => {
         label: "Full Access",
         sandboxMode: "danger-full-access",
         approvalPolicy: "never",
+        capabilityMode: "github-write",
         unsafe: true,
       },
       {
@@ -466,6 +564,7 @@ describe("loadConfig", () => {
         label: "Danger Full",
         sandboxMode: "danger-full-access",
         approvalPolicy: "never",
+        capabilityMode: "safe",
         unsafe: true,
       },
     ]);
