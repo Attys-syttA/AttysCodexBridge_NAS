@@ -44,6 +44,8 @@ AttysCodexBridge can also be used in a multi-repo setup: one bot process can ser
    npm install
    ```
 
+   Note: the current dev toolchain is pinned to `tsx 4.22.x` and `vitest 4.1.x` to remove previously reported high-severity audit findings without changing the bot's runtime feature set.
+
 2. Copy the example environment file:
    ```bash
    cp .env.example .env
@@ -100,6 +102,7 @@ AttysCodexBridge can also be used in a multi-repo setup: one bot process can ser
 | `/retry` | Resend the last prompt |
 | `/abort` | Cancel the current turn |
 | `/commit` | Confirmation-based local commit flow; never pushes |
+| `/push` | Confirmation-based git push when the worker verifies remote publish capability |
 | `/launch_profiles` | Select launch profile for new or reattached threads (`/launch` alias kept) |
 | `/model` | View and change the model |
 | `/effort` | Set reasoning effort: `minimal` · `low` · `medium` · `high` · `xhigh` |
@@ -158,6 +161,9 @@ Per-turn token usage is hidden by default. Set `SHOW_TURN_TOKEN_USAGE=true` if y
 - `/launch_profiles` changes only future thread creation or reattachment in the current chat/topic context; it does not mutate an already active thread in place
 - Extra `danger-full-access` profiles are blocked unless `ENABLE_UNSAFE_LAUNCH_PROFILES=true`
 - Selecting a `danger-full-access` profile from Telegram requires an explicit confirmation step
+- `Full Access` only means Codex is not sandbox-limited at runtime; it does not prove that remote Git push will work
+- Remote push needs three separate things on the worker machine: a launch profile that allows it, working network reachability to the Git host, and valid Git authentication
+- `/doctor`, `/session`, and `/repo` now report remote push capability separately from the launch profile so the bot does not overstate what it can actually publish
 
 ## Multi-Session Architecture
 
@@ -215,7 +221,17 @@ All bot-owned runtime data belongs there: health, contexts, watchdog state, hand
 
 When Codex works on a concrete target repo, that repo's own `AGENTS.md` rules still apply. If the target repo requires `STATE.md` or `docs/CHANGELOG.dev.md` updates, write only target-repo facts there. Do not write bot lifecycle data, Telegram session details, watchdog status, PID, restart/stop state, or other AttysCodexBridge operational data into target repo docs.
 
-`/commit` is intentionally local-only: it can create a commit after confirmation and checks, but it does not push. Push from a network-enabled Codex/VS Code session when appropriate.
+`/commit` is intentionally local-only: it can create a commit after confirmation and checks, but it does not push.
+
+`/push` is the separate publish flow. Before it offers confirmation, the bot probes the active repo on the worker and checks whether:
+
+- the workspace is a Git repo
+- a usable remote is configured
+- the remote host is reachable
+- a read-only remote probe works
+- a dry-run push succeeds for the current branch
+
+Only after those checks succeed does the bot offer the final Telegram confirmation and run `git push --porcelain` on the worker.
 
 ## Handoff: Telegram → CLI
 
@@ -305,7 +321,11 @@ The compose file:
 npm run dev      # run with tsx (no build step)
 npm run build    # compile TypeScript
 npm test         # run vitest
+npm run nas:inventory:check  # verify NAS bundle file classifications
+npm run build:nas-bundle     # rebuild the guarded NAS upload bundle
 ```
+
+The NAS bundle is now guarded by a versioned manifest and runtime inventory. When a new repo file appears, update the inventory with `npm run nas:inventory:write` before relying on a fresh NAS package build.
 
 ## Release Automation
 

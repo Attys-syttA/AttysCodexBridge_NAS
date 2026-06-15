@@ -30,5 +30,14 @@ PRs should explain the behavior change, note any config or Docker impact, and li
 ## Security & Configuration Tips
 Do not commit `.env`, API keys, or Telegram tokens. Restrict `TELEGRAM_ALLOWED_USER_IDS` to trusted users, and default to `CODEX_SANDBOX_MODE=workspace-write` unless broader access is required.
 
+## NAS Bundle Inventory Discipline
+If a new repository file is added, or an existing file is renamed, moved, or its NAS bundle role changes, update the versioned NAS inventory before considering the task done.
+
+- Run `npm run nas:inventory:write` after the file-layout change so `nas-runtime-inventory.json` stays current.
+- Run `npm run nas:inventory:check` before commit/merge or before rebuilding the NAS upload bundle.
+- Run `npm run build:nas-bundle` only after the inventory check is green.
+- `needs-classification` style drift must not remain before commit/merge.
+- Local env files, secrets, logs, worker-side private state, and generated `telegram_codex_bot/` staging output must not become source-of-truth inventory payload.
+
 ## Release Automation
 AttysCodexBridge does not yet ship with the TelePi npm release workflow, but the reusable Trusted Publishing setup has been documented in `docs/npm-trusted-publishing.md`. Use that playbook when wiring AttysCodexBridge for npm publication and tag-driven GitHub Actions releases.

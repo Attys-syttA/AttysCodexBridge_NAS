@@ -13,7 +13,7 @@ Forditott iranyban is cel maradt: Telegramrol lehessen tisztan visszaadni a szal
 - VSC/Codex thread ID: `00000000-1111-2222-3333-444444444444`
 - Elvart workspace: `<CODEX_WORKS>\AttysCodexBridge`
 - Handoff modell: `gpt-5.5`
-- Host label: `otthon`
+- Host label: `sample-host`
 - Telegram referencia teszt: a VSC oldali referencia szoveg `teszt-pelda-1` volt
 - Telegram oldalon probalt szovegek: `teszt-pelda-2`, `teszt-pelda-3`, majd `/retry`
 
@@ -24,7 +24,7 @@ Forditott iranyban is cel maradt: Telegramrol lehessen tisztan visszaadni a szal
    - Ez vonatkozik a normal szoveges valaszokra es az artifact/document kuldes utvonalara is.
 
 2. A gepazonositas bekerult a lathato statuszba.
-   - A bot uzenetekben latszik: `Host: otthon (WORKSTATION\user)`.
+   - A bot uzenetekben latszik: `Host: sample-host (WORKSTATION\user)`.
    - Ez fontos, mert ugyanaz a Telegram bot tobb gep felol is kuldhet allapotot.
 
 3. A VSC/Codex -> Telegram handoff alapallapot mukodik.

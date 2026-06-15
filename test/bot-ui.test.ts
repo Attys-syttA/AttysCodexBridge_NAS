@@ -30,13 +30,14 @@ describe("bot-ui", () => {
       expect(plain).toContain("/repo");
       expect(plain).toContain("/handoff");
       expect(plain).toContain("/commit");
+      expect(plain).toContain("/push");
       expect(plain).toContain("/notes");
     });
 
-    it("lists all 28 commands", () => {
+    it("lists all 29 commands", () => {
       const { plain } = renderHelpMessage();
       const commandMatches = plain.match(/\/\w+/g) ?? [];
-      expect(commandMatches.length).toBe(28);
+      expect(commandMatches.length).toBe(29);
     });
 
     it("returns valid HTML with bold tags", () => {

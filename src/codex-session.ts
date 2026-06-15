@@ -24,6 +24,14 @@ import {
   formatLaunchProfileBehavior,
   type CodexLaunchProfile,
 } from "./codex-launch.js";
+import {
+  executeGitPush,
+  inspectRepo,
+  probeGitPushCapability,
+  type GitPushCapability,
+  type GitPushResult,
+  type RepoDiagnostics,
+} from "./repo-diagnostics.js";
 import { normalizeWorkspaceList, normalizeWorkspacePath } from "./workspace.js";
 
 export interface CodexSessionCallbacks {
@@ -53,6 +61,9 @@ export interface CodexSessionInfo {
   capabilityMode: string;
   githubWriteEnabled: boolean;
   unsafeLaunch: boolean;
+  pushCapabilityStatus: string;
+  pushCapabilityReason: string;
+  pushRemoteName?: string;
   nextLaunchProfileId?: string;
   nextLaunchProfileLabel?: string;
   nextLaunchProfileBehavior?: string;
@@ -117,6 +128,9 @@ export interface CodexSessionRuntime {
   setLaunchProfile(profileId: string): CodexLaunchProfile;
   getSelectedLaunchProfile(): CodexLaunchProfile;
   escalateLaunchProfile(profileId: string): Promise<CodexSessionInfo>;
+  inspectRepo(): Promise<RepoDiagnostics>;
+  probePushCapability(): Promise<GitPushCapability>;
+  pushCurrentBranch(): Promise<GitPushResult>;
   handback(): { threadId: string | null; workspace: string };
   dispose(): void;
 }
@@ -132,6 +146,7 @@ export class CodexSessionService implements CodexSessionRuntime {
   private currentLaunchProfile: CodexLaunchProfile;
   private activeThreadLaunchProfile: CodexLaunchProfile | null = null;
   private sessionTokens = { input: 0, cached: 0, output: 0 };
+  private lastPushCapability: GitPushCapability | null = null;
 
   private constructor(private readonly config: TeleCodexConfig) {
     this.currentWorkspace = config.workspace;
@@ -176,6 +191,7 @@ export class CodexSessionService implements CodexSessionRuntime {
       capabilityMode: effectiveLaunchProfile.capabilityMode,
       githubWriteEnabled: effectiveLaunchProfile.capabilityMode === "github-write",
       unsafeLaunch: effectiveLaunchProfile.unsafe,
+      ...this.getPushCapabilitySnapshot(effectiveLaunchProfile),
     };
 
     if (this.currentReasoningEffort) {
@@ -363,6 +379,7 @@ export class CodexSessionService implements CodexSessionRuntime {
     this.activeThreadLaunchProfile = this.currentLaunchProfile;
     this.currentWorkspace = effectiveWorkspace;
     this.currentThreadId = this.thread.id ?? null;
+    this.lastPushCapability = null;
     if (model) {
       this.currentModel = model;
     }
@@ -378,6 +395,7 @@ export class CodexSessionService implements CodexSessionRuntime {
     );
     this.activeThreadLaunchProfile = this.currentLaunchProfile;
     this.currentThreadId = threadId;
+    this.lastPushCapability = null;
     return this.getInfo();
   }
 
@@ -397,6 +415,7 @@ export class CodexSessionService implements CodexSessionRuntime {
     this.activeThreadLaunchProfile = this.currentLaunchProfile;
     this.currentWorkspace = workspace;
     this.currentThreadId = threadId;
+    this.lastPushCapability = null;
     if (model) {
       this.currentModel = model;
     }
@@ -421,6 +440,28 @@ export class CodexSessionService implements CodexSessionRuntime {
     return listModels();
   }
 
+  async inspectRepo(): Promise<RepoDiagnostics> {
+    return inspectRepo(this.currentWorkspace, this.config.workspaceRoot);
+  }
+
+  async probePushCapability(): Promise<GitPushCapability> {
+    this.lastPushCapability = await probeGitPushCapability(this.currentWorkspace);
+    return this.lastPushCapability;
+  }
+
+  async pushCurrentBranch(): Promise<GitPushResult> {
+    const result = await executeGitPush(this.currentWorkspace);
+    this.lastPushCapability = {
+      status: "available",
+      reason: "A push sikeresen lefutott.",
+      remoteName: result.remoteName,
+      remoteUrl: result.remoteUrl,
+      branch: result.branch,
+      targetBranch: result.targetBranch,
+    };
+    return result;
+  }
+
   setModel(slug: string): string {
     this.currentModel = slug;
     return slug;
@@ -432,6 +473,7 @@ export class CodexSessionService implements CodexSessionRuntime {
 
   setLaunchProfile(profileId: string): CodexLaunchProfile {
     this.currentLaunchProfile = getLaunchProfile(this.config, profileId);
+    this.lastPushCapability = null;
     this.resetCodexClient();
     return this.currentLaunchProfile;
   }
@@ -443,6 +485,7 @@ export class CodexSessionService implements CodexSessionRuntime {
   async escalateLaunchProfile(profileId: string): Promise<CodexSessionInfo> {
     this.ensureIdle("escalate launch profile");
     this.currentLaunchProfile = getLaunchProfile(this.config, profileId);
+    this.lastPushCapability = null;
     this.resetCodexClient();
 
     if (!this.currentThreadId) {
@@ -460,6 +503,7 @@ export class CodexSessionService implements CodexSessionRuntime {
     this.thread = null;
     this.currentThreadId = null;
     this.activeThreadLaunchProfile = null;
+    this.lastPushCapability = null;
     return info;
   }
 
@@ -469,6 +513,7 @@ export class CodexSessionService implements CodexSessionRuntime {
     this.thread = null;
     this.currentThreadId = null;
     this.activeThreadLaunchProfile = null;
+    this.lastPushCapability = null;
   }
 
   private buildSdkInput(input: CodexPromptInput): Input {
@@ -560,6 +605,32 @@ export class CodexSessionService implements CodexSessionRuntime {
       },
       env: buildCodexEnv(this.config.codexApiKey),
     });
+  }
+
+  private getPushCapabilitySnapshot(profile: CodexLaunchProfile): {
+    pushCapabilityStatus: string;
+    pushCapabilityReason: string;
+    pushRemoteName?: string;
+  } {
+    if (profile.capabilityMode !== "github-write") {
+      return {
+        pushCapabilityStatus: "blocked",
+        pushCapabilityReason: "A mostani indítási profil nem enged távoli GitHub push műveletet.",
+      };
+    }
+
+    if (!this.lastPushCapability) {
+      return {
+        pushCapabilityStatus: "unknown",
+        pushCapabilityReason: "A remote push képesség még nincs ellenőrizve ebben a szálban.",
+      };
+    }
+
+    return {
+      pushCapabilityStatus: this.lastPushCapability.status,
+      pushCapabilityReason: this.lastPushCapability.reason,
+      ...(this.lastPushCapability.remoteName ? { pushRemoteName: this.lastPushCapability.remoteName } : {}),
+    };
   }
 }
 

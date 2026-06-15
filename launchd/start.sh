@@ -1,5 +1,8 @@
 #!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-export HOME="/Users/sample-user"
-cd /Users/sample-user/Projects/TeleCodex
-exec /opt/homebrew/bin/node dist/index.js
+
+cd "$SCRIPT_DIR"
+exec node dist/index.js

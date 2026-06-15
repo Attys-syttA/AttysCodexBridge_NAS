@@ -28,7 +28,7 @@ import {
   type CodexSessionInfo,
   type CodexSessionRuntime,
 } from "./codex-session.js";
-import { formatCapabilitySummary, promptLikelyNeedsGithubWrite } from "./codex-session-utils.js";
+import { formatCapabilitySummary, formatPushCapabilitySummary, promptLikelyNeedsGithubWrite } from "./codex-session-utils.js";
 import { checkAuthStatus, clearAuthCache, startLogin, startLogout } from "./codex-auth.js";
 import { findCodexSessionFile } from "./codex-session-file.js";
 import {
@@ -52,7 +52,7 @@ import {
   writeBotControlRequest,
   type BotControlAction,
 } from "./process-control.js";
-import { formatGitStatusPlain, inspectRepo, type RepoDiagnostics } from "./repo-diagnostics.js";
+import { formatGitPushCapabilityPlain, formatGitStatusPlain, type RepoDiagnostics } from "./repo-diagnostics.js";
 import { getRuntimeRoot } from "./runtime-paths.js";
 import { SessionRegistry, type ContextHandoff } from "./session-registry.js";
 import { getAvailableBackends, transcribeAudio } from "./voice.js";
@@ -70,6 +70,7 @@ const LAUNCH_PROFILES_COMMAND = "/launch_profiles";
 const WORKERS_COMMAND = "/workers";
 const BOT_CONTROL_CONFIRM_TTL_MS = 2 * 60 * 1000;
 const COMMIT_CONFIRM_TTL_MS = 5 * 60 * 1000;
+const PUSH_CONFIRM_TTL_MS = 5 * 60 * 1000;
 
 type TelegramChatId = number | string;
 type TelegramParseMode = "HTML";
@@ -85,6 +86,14 @@ type PendingCommitConfirmation = {
   repoRoot: string;
   message: string;
   files: string[];
+  expiresAt: number;
+};
+type PendingPushConfirmation = {
+  contextKey: TelegramContextKey;
+  repoRoot: string;
+  branch: string;
+  remoteName: string;
+  targetBranch: string;
   expiresAt: number;
 };
 type PendingPromptEscalation = {
@@ -177,6 +186,7 @@ export function createBot(
   const pendingEffortButtons = new Map<TelegramContextKey, KeyboardItem[]>();
   const pendingBotControlConfirmations = new Map<string, PendingBotControlConfirmation>();
   const pendingCommitConfirmations = new Map<string, PendingCommitConfirmation>();
+  const pendingPushConfirmations = new Map<string, PendingPushConfirmation>();
   const pendingPromptEscalations = new Map<string, PendingPromptEscalation>();
   const lastPromptInput = new Map<TelegramContextKey, CodexPromptInput>();
 
@@ -234,7 +244,7 @@ export function createBot(
   };
 
   const inspectContextRepo = async (session: CodexSessionRuntime): Promise<RepoDiagnostics> => {
-    return inspectRepo(session.getInfo().workspace, config.workspaceRoot);
+    return session.inspectRepo();
   };
 
   const getSessionWorkerId = (session?: CodexSessionRuntime): string | undefined => {
@@ -1443,6 +1453,7 @@ export function createBot(
     }
 
     const { contextKey, session } = contextSession;
+    await session.probePushCapability().catch(() => {});
     const info = session.getInfo();
     const contextLabel = isTopicContext(contextKey) ? "Téma szál" : "Chat szál";
     const handoff = registry.getHandoff(contextKey);
@@ -1486,6 +1497,10 @@ export function createBot(
   ): Promise<void> => {
     const info = session.getInfo();
     const repo = await inspectContextRepo(session);
+    const pushCapability = await session.probePushCapability().catch((error) => ({
+      status: "unknown" as const,
+      reason: error instanceof Error ? error.message : String(error),
+    }));
     const lines = command === "git"
       ? ["Git állapot:", formatGitStatusPlain(repo.git)]
       : [
@@ -1502,6 +1517,12 @@ export function createBot(
             : "Konkrét repo munkamappának tűnik.",
         ];
 
+    if (command === "git") {
+      lines.push("", formatGitPushCapabilityPlain(pushCapability));
+    } else {
+      lines.splice(4, 0, "", formatGitPushCapabilityPlain(pushCapability));
+    }
+
     await appendOperatorEvent(config, {
       command: `/${command}`,
       decision: "read-only",
@@ -1512,6 +1533,7 @@ export function createBot(
         dirty: repo.git.dirty,
         ahead: repo.git.ahead,
         behind: repo.git.behind,
+        pushCapability: pushCapability.status,
       },
     }).catch(() => {});
     await safeReply(ctx, escapeHTML(lines.join("\n")), { fallbackText: lines.join("\n") });
@@ -1540,6 +1562,7 @@ export function createBot(
     }
 
     const { session } = contextSession;
+    await session.probePushCapability().catch(() => {});
     const info = session.getInfo();
     const repo = await inspectContextRepo(session);
     const authStatus = await checkAuthStatus(config.codexApiKey);
@@ -1555,6 +1578,7 @@ export function createBot(
       `Thread ID: ${info.threadId ?? "(még nincs)"}`,
       `Launch profile: ${info.launchProfileLabel} (${info.launchProfileBehavior})`,
       `Capability: ${formatCapabilitySummary(info)}`,
+      `Remote GitHub push: ${formatPushCapabilitySummary(info)}`,
       `Runtime root: ${getRuntimeRoot(config)}`,
       "",
       formatGitStatusPlain(repo.git),
@@ -1572,7 +1596,7 @@ export function createBot(
       decision: "read-only",
       workspace: info.workspace,
       threadId: info.threadId,
-      detail: { repoRoot: repo.git.repoRoot, auth: authStatus.method },
+      detail: { repoRoot: repo.git.repoRoot, auth: authStatus.method, pushCapability: info.pushCapabilityStatus },
     }).catch(() => {});
     await safeReply(ctx, escapeHTML(lines.join("\n")), { fallbackText: lines.join("\n") });
   });
@@ -1755,6 +1779,136 @@ export function createBot(
       ...repo.git.changedFiles.slice(0, 20).map((file) => `- ${file}`),
       repo.git.changedFiles.length > 20 ? `... és még ${repo.git.changedFiles.length - 20} fájl` : undefined,
     ].filter((line): line is string => Boolean(line));
+    await safeReply(ctx, escapeHTML(lines.join("\n")), {
+      fallbackText: lines.join("\n"),
+      replyMarkup: keyboard,
+    });
+  });
+
+  bot.command("push", async (ctx) => {
+    const contextSession = await getContextSession(ctx, { deferThreadStart: true });
+    if (!contextSession) {
+      return;
+    }
+
+    const { contextKey, session } = contextSession;
+    if (isBusy(contextKey)) {
+      await safeReply(ctx, escapeHTML("Futó Codex kérés közben nem indítok push-flow-t."), {
+        fallbackText: "Futó Codex kérés közben nem indítok push-flow-t.",
+      });
+      return;
+    }
+
+    const repo = await inspectContextRepo(session);
+    const pushCapability = await session.probePushCapability().catch((error) => ({
+      status: "unknown" as const,
+      reason: error instanceof Error ? error.message : String(error),
+    }));
+    const info = session.getInfo();
+
+    if (!repo.git.isRepo || !repo.git.repoRoot) {
+      await appendOperatorEvent(config, {
+        command: "/push",
+        decision: "blocked",
+        workspace: info.workspace,
+        threadId: info.threadId,
+        detail: { reason: "no_git_repo" },
+      }).catch(() => {});
+      await safeReply(ctx, escapeHTML("Nem git repo az aktív workspace. Válassz konkrét projektet a /projekts paranccsal."), {
+        fallbackText: "Nem git repo az aktív workspace. Válassz konkrét projektet a /projekts paranccsal.",
+      });
+      return;
+    }
+
+    if (!info.githubWriteEnabled) {
+      const lines = [
+        "Push blokkolva: a mostani szál profilja nem GitHub-írásra van állítva.",
+        "",
+        `Indítási profil: ${info.launchProfileLabel} (${info.launchProfileBehavior})`,
+        `Képesség: ${formatCapabilitySummary(info)}`,
+        "",
+        "Válassz GitHub Write vagy Full Access profilt, majd ellenőrizd újra.",
+      ];
+      await appendOperatorEvent(config, {
+        command: "/push",
+        decision: "blocked",
+        workspace: info.workspace,
+        threadId: info.threadId,
+        detail: { reason: "profile_not_github_write", profile: info.launchProfileId },
+      }).catch(() => {});
+      await safeReply(ctx, escapeHTML(lines.join("\n")), { fallbackText: lines.join("\n") });
+      return;
+    }
+
+    if (pushCapability.status !== "available") {
+      const lines = [
+        "Push blokkolva: a remote publish útvonal nincs rendben.",
+        "",
+        formatGitPushCapabilityPlain(pushCapability),
+      ];
+      await appendOperatorEvent(config, {
+        command: "/push",
+        decision: "blocked",
+        workspace: info.workspace,
+        threadId: info.threadId,
+        detail: { reason: "push_capability_unavailable", status: pushCapability.status },
+      }).catch(() => {});
+      await safeReply(ctx, escapeHTML(lines.join("\n")), { fallbackText: lines.join("\n") });
+      return;
+    }
+
+    if (!repo.git.branch || repo.git.branch === "(detached)") {
+      await safeReply(ctx, escapeHTML("Push blokkolva: a repo detached HEAD állapotban van."), {
+        fallbackText: "Push blokkolva: a repo detached HEAD állapotban van.",
+      });
+      return;
+    }
+
+    if (repo.git.behind > 0) {
+      await safeReply(ctx, escapeHTML("Push blokkolva: a helyi branch le van maradva az upstreamhez képest."), {
+        fallbackText: "Push blokkolva: a helyi branch le van maradva az upstreamhez képest.",
+      });
+      return;
+    }
+
+    if (repo.git.ahead <= 0) {
+      await safeReply(ctx, escapeHTML("Nincs pusholható helyi commit. Előbb készíts commitot, vagy ellenőrizd a branch állapotát."), {
+        fallbackText: "Nincs pusholható helyi commit. Előbb készíts commitot, vagy ellenőrizd a branch állapotát.",
+      });
+      return;
+    }
+
+    const remoteName = pushCapability.remoteName ?? repo.git.upstream?.split("/")[0] ?? "origin";
+    const targetBranch = pushCapability.targetBranch ?? repo.git.upstream?.split("/").slice(1).join("/") ?? repo.git.branch;
+    const nonce = randomUUID();
+    pendingPushConfirmations.set(nonce, {
+      contextKey,
+      repoRoot: repo.git.repoRoot,
+      branch: repo.git.branch,
+      remoteName,
+      targetBranch,
+      expiresAt: Date.now() + PUSH_CONFIRM_TTL_MS,
+    });
+
+    const keyboard = new InlineKeyboard()
+      .text("Push megerősítése", `push_yes:${nonce}`)
+      .row()
+      .text("Mégse", `push_no:${nonce}`);
+
+    const lines = [
+      "Push előnézet:",
+      `Repo: ${repo.git.repoRoot}`,
+      `Branch: ${repo.git.branch}`,
+      `Remote: ${remoteName}`,
+      `Cél branch: ${targetBranch}`,
+      `Ahead/behind: ${repo.git.ahead}/${repo.git.behind}`,
+      `Utolsó commit: ${repo.git.lastCommit ?? "(nincs)"}`,
+      "",
+      "Ellenőrzött állapot:",
+      `- ${pushCapability.reason}`,
+      "",
+      "Megerősítés után git push fog futni ezen a worker gépen.",
+    ];
     await safeReply(ctx, escapeHTML(lines.join("\n")), {
       fallbackText: lines.join("\n"),
       replyMarkup: keyboard,
@@ -2432,6 +2586,119 @@ export function createBot(
       const message = `Commit-flow hiba: ${friendlyErrorText(error)}`;
       await appendOperatorEvent(config, {
         command: "/commit",
+        decision: "failed",
+        workspace: pending.repoRoot,
+        detail: { error: friendlyErrorText(error) },
+      }).catch(() => {});
+      await safeEditMessage(bot, chatId, messageId, `<b>Nem sikerült:</b> ${escapeHTML(message)}`, {
+        fallbackText: message,
+      });
+    }
+  });
+
+  bot.callbackQuery(/^push_(yes|no):(.+)$/, async (ctx) => {
+    const chatId = ctx.chat?.id;
+    const messageId = ctx.callbackQuery.message?.message_id;
+    const decision = ctx.match?.[1];
+    const nonce = ctx.match?.[2];
+    const contextKey = contextKeyFromCtx(ctx);
+
+    if (!chatId || !messageId || !decision || !nonce || !contextKey) {
+      await ctx.answerCallbackQuery();
+      return;
+    }
+
+    const pending = pendingPushConfirmations.get(nonce);
+    if (!pending || pending.contextKey !== contextKey || pending.expiresAt < Date.now()) {
+      pendingPushConfirmations.delete(nonce);
+      await ctx.answerCallbackQuery({ text: "A push megerősítés lejárt" });
+      await safeEditMessage(bot, chatId, messageId, escapeHTML("A push megerősítés lejárt. Futtasd újra: /push"), {
+        fallbackText: "A push megerősítés lejárt. Futtasd újra: /push",
+      });
+      return;
+    }
+
+    pendingPushConfirmations.delete(nonce);
+    if (decision === "no") {
+      await ctx.answerCallbackQuery({ text: "Mégse" });
+      await appendOperatorEvent(config, {
+        command: "/push",
+        decision: "blocked",
+        workspace: pending.repoRoot,
+        detail: { reason: "cancelled" },
+      }).catch(() => {});
+      await safeEditMessage(bot, chatId, messageId, escapeHTML("Mégse. Push nem indult el."), {
+        fallbackText: "Mégse. Push nem indult el.",
+      });
+      return;
+    }
+
+    const contextSession = await getContextSession(ctx, { deferThreadStart: true });
+    if (!contextSession) {
+      await ctx.answerCallbackQuery({ text: "A szál nem érhető el" });
+      return;
+    }
+
+    const { session } = contextSession;
+    if (isBusy(contextKey)) {
+      await ctx.answerCallbackQuery({ text: "Futó kérés van" });
+      await safeEditMessage(bot, chatId, messageId, escapeHTML("Futó Codex kérés közben nem indítok push-flow-t."), {
+        fallbackText: "Futó Codex kérés közben nem indítok push-flow-t.",
+      });
+      return;
+    }
+
+    await ctx.answerCallbackQuery({ text: "Push indul..." });
+    await safeEditMessage(bot, chatId, messageId, escapeHTML("Push ellenőrzése és végrehajtása folyamatban..."), {
+      fallbackText: "Push ellenőrzése és végrehajtása folyamatban...",
+    });
+
+    try {
+      const capability = await session.probePushCapability();
+      if (capability.status !== "available") {
+        const lines = [
+          "Push blokkolva a végső ellenőrzésnél.",
+          "",
+          formatGitPushCapabilityPlain(capability),
+        ];
+        await appendOperatorEvent(config, {
+          command: "/push",
+          decision: "blocked",
+          workspace: pending.repoRoot,
+          detail: { reason: "preflight_failed", status: capability.status },
+        }).catch(() => {});
+        await safeEditMessage(bot, chatId, messageId, escapeHTML(lines.join("\n")), { fallbackText: lines.join("\n") });
+        return;
+      }
+
+      const result = await session.pushCurrentBranch();
+      const repo = await inspectContextRepo(session);
+      const lines = [
+        "Push sikeresen lefutott.",
+        "",
+        `Remote: ${result.remoteName}`,
+        `Branch: ${result.branch} -> ${result.targetBranch}`,
+        repo.git.upstream ? `Szinkron: ${repo.git.upstream}, ahead ${repo.git.ahead}, behind ${repo.git.behind}` : undefined,
+        repo.git.lastCommit ? `Utolsó commit: ${repo.git.lastCommit}` : undefined,
+        "",
+        result.output || "(git push nem adott vissza rövid kimenetet)",
+      ].filter((line): line is string => Boolean(line));
+
+      await appendOperatorEvent(config, {
+        command: "/push",
+        decision: "push-completed",
+        workspace: pending.repoRoot,
+        detail: {
+          remote: result.remoteName,
+          branch: result.branch,
+          targetBranch: result.targetBranch,
+        },
+      }).catch(() => {});
+      await safeEditMessage(bot, chatId, messageId, escapeHTML(lines.join("\n")), { fallbackText: lines.join("\n") });
+    } catch (error) {
+      const message = `Push hiba: ${friendlyErrorText(error)}`;
+      await appendOperatorEvent(config, {
+        command: "/push",
         decision: "failed",
         workspace: pending.repoRoot,
         detail: { error: friendlyErrorText(error) },
@@ -3419,6 +3686,7 @@ export async function registerCommands(bot: Bot<Context>): Promise<void> {
     { command: "watchdog", description: "Bridge állapotkép" },
     { command: "notes", description: "Bot-saját operator jegyzet mentése" },
     { command: "commit", description: "Biztonságos commit-flow push nélkül" },
+    { command: "push", description: "Megerősítéses git push, ha a worker képes rá" },
     { command: "restart", description: "Bot finom újraindítása megerősítéssel" },
     { command: "stop", description: "Bot leállítása megerősítéssel" },
     { command: "handoff", description: "Handoff menü" },
@@ -3443,6 +3711,7 @@ function renderSessionInfoPlain(config: TeleCodexConfig, info: CodexSessionInfo)
     `Thread ID: ${info.threadId ?? "(még nincs elindítva)"}`,
     `Workspace: ${info.workspace}`,
     `Indítási profil: ${info.launchProfileLabel} (${info.launchProfileBehavior})${info.unsafeLaunch ? " [unsafe]" : ""}`,
+    `Remote GitHub push: ${formatPushCapabilitySummary(info)}`,
     info.nextLaunchProfileId
       ? `Következő indítási profil: ${info.nextLaunchProfileLabel} (${info.nextLaunchProfileBehavior})${info.nextUnsafeLaunch ? " [unsafe]" : ""}`
       : undefined,
@@ -3461,6 +3730,7 @@ function renderSessionInfoHTML(config: TeleCodexConfig, info: CodexSessionInfo):
     `<b>Workspace:</b> <code>${escapeHTML(info.workspace)}</code>`,
     `<b>Indítási profil:</b> <code>${escapeHTML(info.launchProfileLabel)}</code>`,
     `<b>Indítási működés:</b> <code>${escapeHTML(info.launchProfileBehavior)}</code>${info.unsafeLaunch ? " ⚠️" : ""}`,
+    `<b>Remote GitHub push:</b> <code>${escapeHTML(formatPushCapabilitySummary(info))}</code>`,
     info.nextLaunchProfileId
       ? `<b>Következő indítási profil:</b> <code>${escapeHTML(info.nextLaunchProfileLabel ?? "")}</code> <i>(${escapeHTML(info.nextLaunchProfileBehavior ?? "")})</i>${info.nextUnsafeLaunch ? " ⚠️" : ""}`
       : undefined,
@@ -4141,6 +4411,7 @@ function renderSessionInfoPlainV2(
     `Workspace: ${info.workspace}`,
     `Inditasi profil: ${info.launchProfileLabel} (${info.launchProfileBehavior})${info.unsafeLaunch ? " [unsafe]" : ""}`,
     `Kepesseg: ${formatCapabilitySummary(info)}`,
+    `Remote GitHub push: ${formatPushCapabilitySummary(info)}`,
     info.nextLaunchProfileId
       ? `Kovetkezo inditasi profil: ${info.nextLaunchProfileLabel} (${info.nextLaunchProfileBehavior})${info.nextUnsafeLaunch ? " [unsafe]" : ""}${info.nextCapabilityMode ? `, ${info.nextCapabilityMode}` : ""}`
       : undefined,
@@ -4165,6 +4436,7 @@ function renderSessionInfoHTMLV2(
     `<b>Inditasi profil:</b> <code>${escapeHTML(info.launchProfileLabel)}</code>`,
     `<b>Inditasi mukodes:</b> <code>${escapeHTML(info.launchProfileBehavior)}</code>${info.unsafeLaunch ? " ⚠️" : ""}`,
     `<b>Kepesseg:</b> <code>${escapeHTML(formatCapabilitySummary(info))}</code>`,
+    `<b>Remote GitHub push:</b> <code>${escapeHTML(formatPushCapabilitySummary(info))}</code>`,
     info.nextLaunchProfileId
       ? `<b>Kovetkezo inditasi profil:</b> <code>${escapeHTML(info.nextLaunchProfileLabel ?? "")}</code> <i>(${escapeHTML(info.nextLaunchProfileBehavior ?? "")})</i>${info.nextUnsafeLaunch ? " ⚠️" : ""}${info.nextCapabilityMode ? ` <code>${escapeHTML(info.nextCapabilityMode)}</code>` : ""}`
       : undefined,

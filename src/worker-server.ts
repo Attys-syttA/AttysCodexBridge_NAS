@@ -199,6 +199,21 @@ export function startWorkerServer(
           return;
         }
 
+        if (method === "GET" && tail === "repo-diagnostics") {
+          sendJson(res, 200, { ok: true, data: await entry.service.inspectRepo() });
+          return;
+        }
+
+        if (method === "GET" && tail === "push-capability") {
+          sendJson(res, 200, { ok: true, data: await entry.service.probePushCapability() });
+          return;
+        }
+
+        if (method === "POST" && tail === "push") {
+          sendJson(res, 200, { ok: true, data: await entry.service.pushCurrentBranch() });
+          return;
+        }
+
         if (method === "POST" && tail === "handback") {
           sendJson(res, 200, { ok: true, data: entry.service.handback() });
           return;

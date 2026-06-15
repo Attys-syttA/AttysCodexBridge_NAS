@@ -5,7 +5,7 @@ import type { TeleCodexConfig } from "./config.js";
 import type { CodexSessionInfo } from "./codex-session.js";
 import { getOperatorEventsPath, getOperatorNotesDir } from "./runtime-paths.js";
 
-export type OperatorDecision = "read-only" | "commit-created" | "blocked" | "failed" | "noted";
+export type OperatorDecision = "read-only" | "commit-created" | "push-completed" | "blocked" | "failed" | "noted";
 
 export interface OperatorEvent {
   command: string;

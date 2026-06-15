@@ -11,6 +11,7 @@ import type {
   SwitchSessionOptions,
 } from "./codex-session.js";
 import type { CodexModelRecord, CodexThreadRecord } from "./codex-state.js";
+import type { GitPushCapability, GitPushResult, RepoDiagnostics } from "./repo-diagnostics.js";
 import { RemoteWorkerClient } from "./remote-worker-client.js";
 
 export class RemoteCodexSessionService implements CodexSessionRuntime {
@@ -112,6 +113,32 @@ export class RemoteCodexSessionService implements CodexSessionRuntime {
       await this.refreshLists();
     }
     return [...this.models];
+  }
+
+  async inspectRepo(): Promise<RepoDiagnostics> {
+    return this.client.inspectRepo(this.sessionId);
+  }
+
+  async probePushCapability(): Promise<GitPushCapability> {
+    const capability = await this.client.probePushCapability(this.sessionId);
+    this.currentInfo = {
+      ...this.currentInfo,
+      pushCapabilityStatus: capability.status,
+      pushCapabilityReason: capability.reason,
+      ...(capability.remoteName ? { pushRemoteName: capability.remoteName } : {}),
+    };
+    return capability;
+  }
+
+  async pushCurrentBranch(): Promise<GitPushResult> {
+    const result = await this.client.pushCurrentBranch(this.sessionId);
+    this.currentInfo = {
+      ...this.currentInfo,
+      pushCapabilityStatus: "available",
+      pushCapabilityReason: "A push sikeresen lefutott.",
+      pushRemoteName: result.remoteName,
+    };
+    return result;
   }
 
   async refreshLists(): Promise<void> {

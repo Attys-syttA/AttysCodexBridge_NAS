@@ -1,0 +1,1098 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-06-15T09:15:47.810Z",
+  "source": {
+    "fileSet": "repo-files-excluding-local-generated-and-bundle-staging",
+    "dateField": "filesystem-mtime",
+    "hashPolicy": "not-recorded"
+  },
+  "packageEligibleFamilies": [
+    "runtime-required",
+    "runtime-optional",
+    "docs-payload"
+  ],
+  "families": {
+    "runtime-required": "Required for the stable NAS bridge runtime bundle.",
+    "runtime-optional": "Needed for optional NAS dev/runtime support.",
+    "docs-payload": "Selected operator docs shipped with the NAS bundle.",
+    "developer-only": "Repo-only source, tooling, or docs file.",
+    "test-only": "Test file not shipped in the bundle.",
+    "local-sensitive-forbidden": "Local env, secret, state, or machine-specific file.",
+    "excluded-generated": "Generated output or staging directory that must stay out of source packaging.",
+    "needs-classification": "New or changed file awaiting explicit NAS bundle classification."
+  },
+  "files": [
+    {
+      "path": ".dockerignore",
+      "name": ".dockerignore",
+      "family": "runtime-required",
+      "status": "classified",
+      "reason": "Required top-level NAS bridge packaging input.",
+      "lastModifiedAt": "2026-06-08T16:18:44.000Z"
+    },
+    {
+      "path": ".env",
+      "name": ".env",
+      "family": "local-sensitive-forbidden",
+      "status": "classified",
+      "reason": "Local env, log, or machine-specific runtime file must stay out of the NAS bundle.",
+      "lastModifiedAt": "2026-06-10T13:00:20.340Z"
+    },
+    {
+      "path": ".env.bridge.example",
+      "name": ".env.bridge.example",
+      "family": "runtime-required",
+      "status": "classified",
+      "reason": "Bridge-side example env file shipped with the NAS bundle.",
+      "lastModifiedAt": "2026-06-10T13:10:56.020Z"
+    },
+    {
+      "path": ".env.example",
+      "name": ".env.example",
+      "family": "local-sensitive-forbidden",
+      "status": "classified",
+      "reason": "Local env, log, or machine-specific runtime file must stay out of the NAS bundle.",
+      "lastModifiedAt": "2026-06-10T13:11:00.023Z"
+    },
+    {
+      "path": ".env.worker.example",
+      "name": ".env.worker.example",
+      "family": "local-sensitive-forbidden",
+      "status": "classified",
+      "reason": "Local env, log, or machine-specific runtime file must stay out of the NAS bundle.",
+      "lastModifiedAt": "2026-06-10T12:36:57.465Z"
+    },
+    {
+      "path": ".github/dependabot.yml",
+      "name": "dependabot.yml",
+      "family": "developer-only",
+      "status": "classified",
+      "reason": "Repository automation file.",
+      "lastModifiedAt": "2026-06-08T16:12:08.000Z"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "name": "ci.yml",
+      "family": "developer-only",
+      "status": "classified",
+      "reason": "Repository automation file.",
+      "lastModifiedAt": "2026-06-08T16:12:08.000Z"
+    },
+    {
+      "path": ".github/workflows/docker-check.yml",
+      "name": "docker-check.yml",
+      "family": "developer-only",
+      "status": "classified",
+      "reason": "Repository automation file.",
+      "lastModifiedAt": "2026-06-08T16:18:54.000Z"
+    },
+    {
+      "path": ".gitignore",
+      "name": ".gitignore",
+      "family": "developer-only",
+      "status": "classified",
+      "reason": "Repository-level file not needed inside the NAS bundle payload.",
+      "lastModifiedAt": "2026-06-11T05:53:35.563Z"
+    },
+    {
+      "path": "AGENTS.md",
+      "name": "AGENTS.md",
+      "family": "developer-only",
+      "status": "classified",
+      "reason": "Repository-level file not needed inside the NAS bundle payload.",
+      "lastModifiedAt": "2026-06-15T09:11:38.847Z"
+    },
+    {
+      "path": "CODEX_RESEARCH.md",
+      "name": "CODEX_RESEARCH.md",
+      "family": "developer-only",
+      "status": "classified",
+      "reason": "Repository-level file not needed inside the NAS bundle payload.",
+      "lastModifiedAt": "2026-06-08T11:37:34.000Z"
+    },
+    {
+      "path": "Dockerfile",
+      "name": "Dockerfile",
+      "family": "developer-only",
+      "status": "classified",
+      "reason": "Repository-level file not needed inside the NAS bundle payload.",
+      "lastModifiedAt": "2026-06-08T11:37:34.000Z"
+    },
+    {
+      "path": "Dockerfile.bridge",
+      "name": "Dockerfile.bridge",
+      "family": "runtime-required",
+      "status": "classified",
+      "reason": "Required top-level NAS bridge packaging input.",
+      "lastModifiedAt": "2026-06-11T05:48:45.405Z"
+    },
+    {
+      "path": "Dockerfile.bridge.dev",
+      "name": "Dockerfile.bridge.dev",
+      "family": "runtime-optional",
+      "status": "classified",
+      "reason": "Optional NAS dev/runtime packaging input.",
+      "lastModifiedAt": "2026-06-11T05:48:45.405Z"
+    },
+    {
+      "path": "Dockerfile.worker",
+      "name": "Dockerfile.worker",
+      "family": "developer-only",
+      "status": "classified",
+      "reason": "Repository-level file not needed inside the NAS bundle payload.",
+      "lastModifiedAt": "2026-06-10T11:56:05.859Z"
+    },
+    {
+      "path": "LICENSE",
+      "name": "LICENSE",
+      "family": "developer-only",
+      "status": "classified",
+      "reason": "Repository-level file not needed inside the NAS bundle payload.",
+      "lastModifiedAt": "2026-06-08T11:37:34.000Z"
+    },
+    {
+      "path": "README.md",
+      "name": "README.md",
+      "family": "developer-only",
+      "status": "classified",
+      "reason": "Repository-level file not needed inside the NAS bundle payload.",
+      "lastModifiedAt": "2026-06-15T09:09:22.218Z"
+    },
+    {
+      "path": "dist/artifacts.js",
+      "name": "artifacts.js",
+      "family": "runtime-required",
+      "status": "classified",
+      "reason": "Compiled runtime output required by the stable NAS bridge image.",
+      "lastModifiedAt": "2026-06-15T09:15:47.712Z"
+    },
+    {
+      "path": "dist/attachments.js",
+      "name": "attachments.js",
+      "family": "runtime-required",
+      "status": "classified",
+      "reason": "Compiled runtime output required by the stable NAS bridge image.",
+      "lastModifiedAt": "2026-06-15T09:15:47.714Z"
+    },
+    {
+      "path": "dist/bot-ui.js",
+      "name": "bot-ui.js",
+      "family": "runtime-required",
+      "status": "classified",
+      "reason": "Compiled runtime output required by the stable NAS bridge image.",
+      "lastModifiedAt": "2026-06-15T09:15:47.717Z"
+    },
+    {
+      "path": "dist/bot.js",
+      "name": "bot.js",
+      "family": "runtime-required",
+      "status": "classified",
+      "reason": "Compiled runtime output required by the stable NAS bridge image.",
+      "lastModifiedAt": "2026-06-15T09:15:47.769Z"
+    },
+    {
+      "path": "dist/codex-auth.js",
+      "name": "codex-auth.js",
+      "family": "runtime-required",
+      "status": "classified",
+      "reason": "Compiled runtime output required by the stable NAS bridge image.",
+      "lastModifiedAt": "2026-06-15T09:15:47.741Z"
+    },
+    {
+      "path": "dist/codex-launch.js",
+      "name": "codex-launch.js",
+      "family": "runtime-required",
+      "status": "classified",
+      "reason": "Compiled runtime output required by the stable NAS bridge image.",
+      "lastModifiedAt": "2026-06-15T09:15:47.718Z"
+    },
+    {
+      "path": "dist/codex-session-file.js",
+      "name": "codex-session-file.js",
+      "family": "runtime-required",
+      "status": "classified",
+      "reason": "Compiled runtime output required by the stable NAS bridge image.",
+      "lastModifiedAt": "2026-06-15T09:15:47.741Z"
+    },
+    {
+      "path": "dist/codex-session-utils.js",
+      "name": "codex-session-utils.js",
+      "family": "runtime-required",
+      "status": "classified",
+      "reason": "Compiled runtime output required by the stable NAS bridge image.",
+      "lastModifiedAt": "2026-06-15T09:15:47.735Z"
+    },
+    {
+      "path": "dist/codex-session.js",
+      "name": "codex-session.js",
+      "family": "runtime-required",
+      "status": "classified",
+      "reason": "Compiled runtime output required by the stable NAS bridge image.",
+      "lastModifiedAt": "2026-06-15T09:15:47.734Z"
+    },
+    {
+      "path": "dist/codex-state.js",
+      "name": "codex-state.js",
+      "family": "runtime-required",
+      "status": "classified",
+      "reason": "Compiled runtime output required by the stable NAS bridge image.",
+      "lastModifiedAt": "2026-06-15T09:15:47.723Z"
+    },
+    {
+      "path": "dist/commit-flow.js",
+      "name": "commit-flow.js",
+      "family": "runtime-required",
+      "status": "classified",
+      "reason": "Compiled runtime output required by the stable NAS bridge image.",
+      "lastModifiedAt": "2026-06-15T09:15:47.742Z"
+    },
+    {
+      "path": "dist/config.js",
+      "name": "config.js",
+      "family": "runtime-required",
+      "status": "classified",
+      "reason": "Compiled runtime output required by the stable NAS bridge image.",
+      "lastModifiedAt": "2026-06-15T09:15:47.722Z"
+    },
+    {
+      "path": "dist/context-key.js",
+      "name": "context-key.js",
+      "family": "runtime-required",
+      "status": "classified",
+      "reason": "Compiled runtime output required by the stable NAS bridge image.",
+      "lastModifiedAt": "2026-06-15T09:15:47.743Z"
+    },
+    {
+      "path": "dist/error-messages.js",
+      "name": "error-messages.js",
+      "family": "runtime-required",
+      "status": "classified",
+      "reason": "Compiled runtime output required by the stable NAS bridge image.",
+      "lastModifiedAt": "2026-06-15T09:15:47.743Z"
+    },
+    {
+      "path": "dist/format.js",
+      "name": "format.js",
+      "family": "runtime-required",
+      "status": "classified",
+      "reason": "Compiled runtime output required by the stable NAS bridge image.",
+      "lastModifiedAt": "2026-06-15T09:15:47.715Z"
+    },
+    {
+      "path": "dist/handoff-inbox.js",
+      "name": "handoff-inbox.js",
+      "family": "runtime-required",
+      "status": "classified",
+      "reason": "Compiled runtime output required by the stable NAS bridge image.",
+      "lastModifiedAt": "2026-06-15T09:15:47.749Z"
+    },
+    {
+      "path": "dist/health.js",
+      "name": "health.js",
+      "family": "runtime-required",
+      "status": "classified",
+      "reason": "Compiled runtime output required by the stable NAS bridge image.",
+      "lastModifiedAt": "2026-06-15T09:15:47.745Z"
+    },
+    {
+      "path": "dist/index.js",
+      "name": "index.js",
+      "family": "runtime-required",
+      "status": "classified",
+      "reason": "Compiled runtime output required by the stable NAS bridge image.",
+      "lastModifiedAt": "2026-06-15T09:15:47.771Z"
+    },
+    {
+      "path": "dist/operator-log.js",
+      "name": "operator-log.js",
+      "family": "runtime-required",
+      "status": "classified",
+      "reason": "Compiled runtime output required by the stable NAS bridge image.",
+      "lastModifiedAt": "2026-06-15T09:15:47.750Z"
+    },
+    {
+      "path": "dist/operator-policy.js",
+      "name": "operator-policy.js",
+      "family": "runtime-required",
+      "status": "classified",
+      "reason": "Compiled runtime output required by the stable NAS bridge image.",
+      "lastModifiedAt": "2026-06-15T09:15:47.751Z"
+    },
+    {
+      "path": "dist/process-control.js",
+      "name": "process-control.js",
+      "family": "runtime-required",
+      "status": "classified",
+      "reason": "Compiled runtime output required by the stable NAS bridge image.",
+      "lastModifiedAt": "2026-06-15T09:15:47.751Z"
+    },
+    {
+      "path": "dist/remote-session.js",
+      "name": "remote-session.js",
+      "family": "runtime-required",
+      "status": "classified",
+      "reason": "Compiled runtime output required by the stable NAS bridge image.",
+      "lastModifiedAt": "2026-06-15T09:15:47.746Z"
+    },
+    {
+      "path": "dist/remote-worker-client.js",
+      "name": "remote-worker-client.js",
+      "family": "runtime-required",
+      "status": "classified",
+      "reason": "Compiled runtime output required by the stable NAS bridge image.",
+      "lastModifiedAt": "2026-06-15T09:15:47.739Z"
+    },
+    {
+      "path": "dist/repo-diagnostics.js",
+      "name": "repo-diagnostics.js",
+      "family": "runtime-required",
+      "status": "classified",
+      "reason": "Compiled runtime output required by the stable NAS bridge image.",
+      "lastModifiedAt": "2026-06-15T09:15:47.727Z"
+    },
+    {
+      "path": "dist/runtime-paths.js",
+      "name": "runtime-paths.js",
+      "family": "runtime-required",
+      "status": "classified",
+      "reason": "Compiled runtime output required by the stable NAS bridge image.",
+      "lastModifiedAt": "2026-06-15T09:15:47.750Z"
+    },
+    {
+      "path": "dist/session-registry.js",
+      "name": "session-registry.js",
+      "family": "runtime-required",
+      "status": "classified",
+      "reason": "Compiled runtime output required by the stable NAS bridge image.",
+      "lastModifiedAt": "2026-06-15T09:15:47.749Z"
+    },
+    {
+      "path": "dist/voice.js",
+      "name": "voice.js",
+      "family": "runtime-required",
+      "status": "classified",
+      "reason": "Compiled runtime output required by the stable NAS bridge image.",
+      "lastModifiedAt": "2026-06-15T09:15:47.737Z"
+    },
+    {
+      "path": "dist/worker-server.js",
+      "name": "worker-server.js",
+      "family": "runtime-required",
+      "status": "classified",
+      "reason": "Compiled runtime output required by the stable NAS bridge image.",
+      "lastModifiedAt": "2026-06-15T09:15:47.771Z"
+    },
+    {
+      "path": "dist/workspace.js",
+      "name": "workspace.js",
+      "family": "runtime-required",
+      "status": "classified",
+      "reason": "Compiled runtime output required by the stable NAS bridge image.",
+      "lastModifiedAt": "2026-06-15T09:15:47.728Z"
+    },
+    {
+      "path": "docker-compose.bridge.dev.yml",
+      "name": "docker-compose.bridge.dev.yml",
+      "family": "runtime-optional",
+      "status": "classified",
+      "reason": "Optional NAS dev/runtime packaging input.",
+      "lastModifiedAt": "2026-06-11T05:48:45.406Z"
+    },
+    {
+      "path": "docker-compose.bridge.yml",
+      "name": "docker-compose.bridge.yml",
+      "family": "runtime-required",
+      "status": "classified",
+      "reason": "Required top-level NAS bridge packaging input.",
+      "lastModifiedAt": "2026-06-11T05:48:45.405Z"
+    },
+    {
+      "path": "docker-compose.yml",
+      "name": "docker-compose.yml",
+      "family": "developer-only",
+      "status": "classified",
+      "reason": "Repository-level file not needed inside the NAS bundle payload.",
+      "lastModifiedAt": "2026-06-08T11:37:34.000Z"
+    },
+    {
+      "path": "docs/emlekezteto-vsc-telegram-handoff.md",
+      "name": "emlekezteto-vsc-telegram-handoff.md",
+      "family": "developer-only",
+      "status": "classified",
+      "reason": "Repository documentation not shipped in the NAS runtime bundle.",
+      "lastModifiedAt": "2026-06-08T21:09:22.000Z"
+    },
+    {
+      "path": "docs/nas-bridge-setup.hu.md",
+      "name": "nas-bridge-setup.hu.md",
+      "family": "docs-payload",
+      "status": "classified",
+      "reason": "Selected operator documentation shipped with the NAS bundle.",
+      "lastModifiedAt": "2026-06-11T05:53:35.565Z"
+    },
+    {
+      "path": "docs/nas-shared-folder-layout.hu.md",
+      "name": "nas-shared-folder-layout.hu.md",
+      "family": "docs-payload",
+      "status": "classified",
+      "reason": "Selected operator documentation shipped with the NAS bundle.",
+      "lastModifiedAt": "2026-06-11T05:53:35.566Z"
+    },
+    {
+      "path": "docs/npm-trusted-publishing.md",
+      "name": "npm-trusted-publishing.md",
+      "family": "developer-only",
+      "status": "classified",
+      "reason": "Repository documentation not shipped in the NAS runtime bundle.",
+      "lastModifiedAt": "2026-06-08T13:56:32.000Z"
+    },
+    {
+      "path": "docs/stories/01-per-context-session-runtime.md",
+      "name": "01-per-context-session-runtime.md",
+      "family": "developer-only",
+      "status": "classified",
+      "reason": "Repository documentation not shipped in the NAS runtime bundle.",
+      "lastModifiedAt": "2026-06-08T13:56:58.000Z"
+    },
+    {
+      "path": "docs/stories/02-file-ingest-and-artifact-delivery.md",
+      "name": "02-file-ingest-and-artifact-delivery.md",
+      "family": "developer-only",
+      "status": "classified",
+      "reason": "Repository documentation not shipped in the NAS runtime bundle.",
+      "lastModifiedAt": "2026-06-08T13:56:58.000Z"
+    },
+    {
+      "path": "docs/stories/03-topic-native-workspace-ux.md",
+      "name": "03-topic-native-workspace-ux.md",
+      "family": "developer-only",
+      "status": "classified",
+      "reason": "Repository documentation not shipped in the NAS runtime bundle.",
+      "lastModifiedAt": "2026-06-08T13:56:58.000Z"
+    },
+    {
+      "path": "docs/stories/04-telegram-login-and-onboarding.md",
+      "name": "04-telegram-login-and-onboarding.md",
+      "family": "developer-only",
+      "status": "classified",
+      "reason": "Repository documentation not shipped in the NAS runtime bundle.",
+      "lastModifiedAt": "2026-06-08T13:56:58.000Z"
+    },
+    {
+      "path": "docs/stories/05-launch-profiles-and-safety-controls.md",
+      "name": "05-launch-profiles-and-safety-controls.md",
+      "family": "developer-only",
+      "status": "classified",
+      "reason": "Repository documentation not shipped in the NAS runtime bundle.",
+      "lastModifiedAt": "2026-06-08T13:56:58.000Z"
+    },
+    {
+      "path": "docs/telegram-thread-handoff.hu.md",
+      "name": "telegram-thread-handoff.hu.md",
+      "family": "developer-only",
+      "status": "classified",
+      "reason": "Repository documentation not shipped in the NAS runtime bundle.",
+      "lastModifiedAt": "2026-06-08T22:37:06.000Z"
+    },
+    {
+      "path": "docs/worker-setup.hu.md",
+      "name": "worker-setup.hu.md",
+      "family": "docs-payload",
+      "status": "classified",
+      "reason": "Selected operator documentation shipped with the NAS bundle.",
+      "lastModifiedAt": "2026-06-15T08:31:53.656Z"
+    },
+    {
+      "path": "launchd/start.sh",
+      "name": "start.sh",
+      "family": "developer-only",
+      "status": "classified",
+      "reason": "Host-specific launcher helper not used by the NAS Docker bundle.",
+      "lastModifiedAt": "2026-06-08T11:37:34.000Z"
+    },
+    {
+      "path": "nas-bundle.manifest.json",
+      "name": "nas-bundle.manifest.json",
+      "family": "developer-only",
+      "status": "classified",
+      "reason": "Repository-level file not needed inside the NAS bundle payload.",
+      "lastModifiedAt": "2026-06-15T09:07:31.138Z"
+    },
+    {
+      "path": "nas-runtime-inventory.json",
+      "name": "nas-runtime-inventory.json",
+      "family": "runtime-optional",
+      "status": "classified",
+      "reason": "Versioned NAS runtime inventory used as packaging guardrail.",
+      "lastModifiedAt": "2026-06-15T09:10:54.086Z"
+    },
+    {
+      "path": "package-lock.json",
+      "name": "package-lock.json",
+      "family": "runtime-required",
+      "status": "classified",
+      "reason": "Required top-level NAS bridge packaging input.",
+      "lastModifiedAt": "2026-06-15T08:58:07.105Z"
+    },
+    {
+      "path": "package.json",
+      "name": "package.json",
+      "family": "runtime-required",
+      "status": "classified",
+      "reason": "Required top-level NAS bridge packaging input.",
+      "lastModifiedAt": "2026-06-15T09:07:25.490Z"
+    },
+    {
+      "path": "scripts/build-nas-bundle.mjs",
+      "name": "build-nas-bundle.mjs",
+      "family": "developer-only",
+      "status": "classified",
+      "reason": "Build or operator helper script kept in the repo only.",
+      "lastModifiedAt": "2026-06-15T09:10:34.154Z"
+    },
+    {
+      "path": "scripts/build-nas-bundle.ps1",
+      "name": "build-nas-bundle.ps1",
+      "family": "developer-only",
+      "status": "classified",
+      "reason": "Build or operator helper script kept in the repo only.",
+      "lastModifiedAt": "2026-06-15T09:08:57.546Z"
+    },
+    {
+      "path": "scripts/nas-runtime-inventory-check.mjs",
+      "name": "nas-runtime-inventory-check.mjs",
+      "family": "developer-only",
+      "status": "classified",
+      "reason": "Build or operator helper script kept in the repo only.",
+      "lastModifiedAt": "2026-06-15T09:10:47.667Z"
+    },
+    {
+      "path": "scripts/register-watchdog-task.ps1",
+      "name": "register-watchdog-task.ps1",
+      "family": "developer-only",
+      "status": "classified",
+      "reason": "Build or operator helper script kept in the repo only.",
+      "lastModifiedAt": "2026-06-08T17:11:48.000Z"
+    },
+    {
+      "path": "scripts/send-vsc-handoff.ps1",
+      "name": "send-vsc-handoff.ps1",
+      "family": "developer-only",
+      "status": "classified",
+      "reason": "Build or operator helper script kept in the repo only.",
+      "lastModifiedAt": "2026-06-08T20:31:14.000Z"
+    },
+    {
+      "path": "scripts/start-worker.ps1",
+      "name": "start-worker.ps1",
+      "family": "developer-only",
+      "status": "classified",
+      "reason": "Build or operator helper script kept in the repo only.",
+      "lastModifiedAt": "2026-06-10T13:37:30.210Z"
+    },
+    {
+      "path": "scripts/watchdog.ps1",
+      "name": "watchdog.ps1",
+      "family": "developer-only",
+      "status": "classified",
+      "reason": "Build or operator helper script kept in the repo only.",
+      "lastModifiedAt": "2026-06-08T22:03:18.000Z"
+    },
+    {
+      "path": "src/artifacts.ts",
+      "name": "artifacts.ts",
+      "family": "runtime-optional",
+      "status": "classified",
+      "reason": "Source payload kept for the optional NAS dev image.",
+      "lastModifiedAt": "2026-06-08T11:37:34.000Z"
+    },
+    {
+      "path": "src/attachments.ts",
+      "name": "attachments.ts",
+      "family": "runtime-optional",
+      "status": "classified",
+      "reason": "Source payload kept for the optional NAS dev image.",
+      "lastModifiedAt": "2026-06-08T22:30:04.000Z"
+    },
+    {
+      "path": "src/bot-ui.ts",
+      "name": "bot-ui.ts",
+      "family": "runtime-optional",
+      "status": "classified",
+      "reason": "Source payload kept for the optional NAS dev image.",
+      "lastModifiedAt": "2026-06-15T08:31:31.324Z"
+    },
+    {
+      "path": "src/bot.ts",
+      "name": "bot.ts",
+      "family": "runtime-optional",
+      "status": "classified",
+      "reason": "Source payload kept for the optional NAS dev image.",
+      "lastModifiedAt": "2026-06-15T08:31:26.131Z"
+    },
+    {
+      "path": "src/codex-auth.ts",
+      "name": "codex-auth.ts",
+      "family": "runtime-optional",
+      "status": "classified",
+      "reason": "Source payload kept for the optional NAS dev image.",
+      "lastModifiedAt": "2026-06-10T13:07:03.267Z"
+    },
+    {
+      "path": "src/codex-launch.ts",
+      "name": "codex-launch.ts",
+      "family": "runtime-optional",
+      "status": "classified",
+      "reason": "Source payload kept for the optional NAS dev image.",
+      "lastModifiedAt": "2026-06-10T11:46:48.494Z"
+    },
+    {
+      "path": "src/codex-session-file.ts",
+      "name": "codex-session-file.ts",
+      "family": "runtime-optional",
+      "status": "classified",
+      "reason": "Source payload kept for the optional NAS dev image.",
+      "lastModifiedAt": "2026-06-08T21:34:24.000Z"
+    },
+    {
+      "path": "src/codex-session-utils.ts",
+      "name": "codex-session-utils.ts",
+      "family": "runtime-optional",
+      "status": "classified",
+      "reason": "Source payload kept for the optional NAS dev image.",
+      "lastModifiedAt": "2026-06-15T08:20:54.002Z"
+    },
+    {
+      "path": "src/codex-session.ts",
+      "name": "codex-session.ts",
+      "family": "runtime-optional",
+      "status": "classified",
+      "reason": "Source payload kept for the optional NAS dev image.",
+      "lastModifiedAt": "2026-06-15T08:20:17.051Z"
+    },
+    {
+      "path": "src/codex-state.ts",
+      "name": "codex-state.ts",
+      "family": "runtime-optional",
+      "status": "classified",
+      "reason": "Source payload kept for the optional NAS dev image.",
+      "lastModifiedAt": "2026-06-08T20:36:58.000Z"
+    },
+    {
+      "path": "src/commit-flow.ts",
+      "name": "commit-flow.ts",
+      "family": "runtime-optional",
+      "status": "classified",
+      "reason": "Source payload kept for the optional NAS dev image.",
+      "lastModifiedAt": "2026-06-08T23:12:14.000Z"
+    },
+    {
+      "path": "src/config.ts",
+      "name": "config.ts",
+      "family": "runtime-optional",
+      "status": "classified",
+      "reason": "Source payload kept for the optional NAS dev image.",
+      "lastModifiedAt": "2026-06-10T13:05:53.653Z"
+    },
+    {
+      "path": "src/context-key.ts",
+      "name": "context-key.ts",
+      "family": "runtime-optional",
+      "status": "classified",
+      "reason": "Source payload kept for the optional NAS dev image.",
+      "lastModifiedAt": "2026-06-08T11:37:34.000Z"
+    },
+    {
+      "path": "src/error-messages.ts",
+      "name": "error-messages.ts",
+      "family": "runtime-optional",
+      "status": "classified",
+      "reason": "Source payload kept for the optional NAS dev image.",
+      "lastModifiedAt": "2026-06-08T20:48:16.000Z"
+    },
+    {
+      "path": "src/format.ts",
+      "name": "format.ts",
+      "family": "runtime-optional",
+      "status": "classified",
+      "reason": "Source payload kept for the optional NAS dev image.",
+      "lastModifiedAt": "2026-06-08T11:37:34.000Z"
+    },
+    {
+      "path": "src/handoff-inbox.ts",
+      "name": "handoff-inbox.ts",
+      "family": "runtime-optional",
+      "status": "classified",
+      "reason": "Source payload kept for the optional NAS dev image.",
+      "lastModifiedAt": "2026-06-08T20:31:14.000Z"
+    },
+    {
+      "path": "src/health.ts",
+      "name": "health.ts",
+      "family": "runtime-optional",
+      "status": "classified",
+      "reason": "Source payload kept for the optional NAS dev image.",
+      "lastModifiedAt": "2026-06-08T17:32:32.000Z"
+    },
+    {
+      "path": "src/index.ts",
+      "name": "index.ts",
+      "family": "runtime-optional",
+      "status": "classified",
+      "reason": "Source payload kept for the optional NAS dev image.",
+      "lastModifiedAt": "2026-06-11T07:13:31.083Z"
+    },
+    {
+      "path": "src/operator-log.ts",
+      "name": "operator-log.ts",
+      "family": "runtime-optional",
+      "status": "classified",
+      "reason": "Source payload kept for the optional NAS dev image.",
+      "lastModifiedAt": "2026-06-15T08:26:00.531Z"
+    },
+    {
+      "path": "src/operator-policy.ts",
+      "name": "operator-policy.ts",
+      "family": "runtime-optional",
+      "status": "classified",
+      "reason": "Source payload kept for the optional NAS dev image.",
+      "lastModifiedAt": "2026-06-08T22:29:52.000Z"
+    },
+    {
+      "path": "src/process-control.ts",
+      "name": "process-control.ts",
+      "family": "runtime-optional",
+      "status": "classified",
+      "reason": "Source payload kept for the optional NAS dev image.",
+      "lastModifiedAt": "2026-06-08T22:05:46.000Z"
+    },
+    {
+      "path": "src/remote-session.ts",
+      "name": "remote-session.ts",
+      "family": "runtime-optional",
+      "status": "classified",
+      "reason": "Source payload kept for the optional NAS dev image.",
+      "lastModifiedAt": "2026-06-15T08:20:38.681Z"
+    },
+    {
+      "path": "src/remote-worker-client.ts",
+      "name": "remote-worker-client.ts",
+      "family": "runtime-optional",
+      "status": "classified",
+      "reason": "Source payload kept for the optional NAS dev image.",
+      "lastModifiedAt": "2026-06-15T08:20:25.516Z"
+    },
+    {
+      "path": "src/repo-diagnostics.ts",
+      "name": "repo-diagnostics.ts",
+      "family": "runtime-optional",
+      "status": "classified",
+      "reason": "Source payload kept for the optional NAS dev image.",
+      "lastModifiedAt": "2026-06-15T08:19:30.015Z"
+    },
+    {
+      "path": "src/runtime-paths.ts",
+      "name": "runtime-paths.ts",
+      "family": "runtime-optional",
+      "status": "classified",
+      "reason": "Source payload kept for the optional NAS dev image.",
+      "lastModifiedAt": "2026-06-08T22:28:44.000Z"
+    },
+    {
+      "path": "src/session-registry.ts",
+      "name": "session-registry.ts",
+      "family": "runtime-optional",
+      "status": "classified",
+      "reason": "Source payload kept for the optional NAS dev image.",
+      "lastModifiedAt": "2026-06-11T05:55:54.476Z"
+    },
+    {
+      "path": "src/voice.ts",
+      "name": "voice.ts",
+      "family": "runtime-optional",
+      "status": "classified",
+      "reason": "Source payload kept for the optional NAS dev image.",
+      "lastModifiedAt": "2026-06-10T13:07:14.412Z"
+    },
+    {
+      "path": "src/worker-server.ts",
+      "name": "worker-server.ts",
+      "family": "runtime-optional",
+      "status": "classified",
+      "reason": "Source payload kept for the optional NAS dev image.",
+      "lastModifiedAt": "2026-06-15T08:20:45.948Z"
+    },
+    {
+      "path": "src/workspace.ts",
+      "name": "workspace.ts",
+      "family": "runtime-optional",
+      "status": "classified",
+      "reason": "Source payload kept for the optional NAS dev image.",
+      "lastModifiedAt": "2026-06-10T10:59:30.019Z"
+    },
+    {
+      "path": "start-attyscodexbridge-workspace.ps1",
+      "name": "start-attyscodexbridge-workspace.ps1",
+      "family": "developer-only",
+      "status": "classified",
+      "reason": "Repository-level file not needed inside the NAS bundle payload.",
+      "lastModifiedAt": "2026-06-08T23:28:58.000Z"
+    },
+    {
+      "path": "telecodex-run.err.log",
+      "name": "telecodex-run.err.log",
+      "family": "local-sensitive-forbidden",
+      "status": "classified",
+      "reason": "Local env, log, or machine-specific runtime file must stay out of the NAS bundle.",
+      "lastModifiedAt": "2026-06-08T20:14:54.000Z"
+    },
+    {
+      "path": "telecodex-run.log",
+      "name": "telecodex-run.log",
+      "family": "local-sensitive-forbidden",
+      "status": "classified",
+      "reason": "Local env, log, or machine-specific runtime file must stay out of the NAS bundle.",
+      "lastModifiedAt": "2026-06-08T20:14:54.000Z"
+    },
+    {
+      "path": "test/artifacts.test.ts",
+      "name": "artifacts.test.ts",
+      "family": "test-only",
+      "status": "classified",
+      "reason": "Test code never belongs to the NAS runtime bundle.",
+      "lastModifiedAt": "2026-06-08T11:37:34.000Z"
+    },
+    {
+      "path": "test/attachments.test.ts",
+      "name": "attachments.test.ts",
+      "family": "test-only",
+      "status": "classified",
+      "reason": "Test code never belongs to the NAS runtime bundle.",
+      "lastModifiedAt": "2026-06-08T22:35:10.000Z"
+    },
+    {
+      "path": "test/bot-reply.test.ts",
+      "name": "bot-reply.test.ts",
+      "family": "test-only",
+      "status": "classified",
+      "reason": "Test code never belongs to the NAS runtime bundle.",
+      "lastModifiedAt": "2026-06-08T21:35:46.000Z"
+    },
+    {
+      "path": "test/bot-ui.test.ts",
+      "name": "bot-ui.test.ts",
+      "family": "test-only",
+      "status": "classified",
+      "reason": "Test code never belongs to the NAS runtime bundle.",
+      "lastModifiedAt": "2026-06-15T08:31:36.372Z"
+    },
+    {
+      "path": "test/build-nas-bundle.test.ts",
+      "name": "build-nas-bundle.test.ts",
+      "family": "test-only",
+      "status": "classified",
+      "reason": "Test code never belongs to the NAS runtime bundle.",
+      "lastModifiedAt": "2026-06-15T09:09:16.688Z"
+    },
+    {
+      "path": "test/codex-auth.test.ts",
+      "name": "codex-auth.test.ts",
+      "family": "test-only",
+      "status": "classified",
+      "reason": "Test code never belongs to the NAS runtime bundle.",
+      "lastModifiedAt": "2026-06-08T11:37:34.000Z"
+    },
+    {
+      "path": "test/codex-launch.test.ts",
+      "name": "codex-launch.test.ts",
+      "family": "test-only",
+      "status": "classified",
+      "reason": "Test code never belongs to the NAS runtime bundle.",
+      "lastModifiedAt": "2026-06-10T11:54:37.285Z"
+    },
+    {
+      "path": "test/codex-session.test.ts",
+      "name": "codex-session.test.ts",
+      "family": "test-only",
+      "status": "classified",
+      "reason": "Test code never belongs to the NAS runtime bundle.",
+      "lastModifiedAt": "2026-06-10T11:55:42.138Z"
+    },
+    {
+      "path": "test/codex-state.test.ts",
+      "name": "codex-state.test.ts",
+      "family": "test-only",
+      "status": "classified",
+      "reason": "Test code never belongs to the NAS runtime bundle.",
+      "lastModifiedAt": "2026-06-08T20:36:58.000Z"
+    },
+    {
+      "path": "test/config.test.ts",
+      "name": "config.test.ts",
+      "family": "test-only",
+      "status": "classified",
+      "reason": "Test code never belongs to the NAS runtime bundle.",
+      "lastModifiedAt": "2026-06-10T13:10:46.006Z"
+    },
+    {
+      "path": "test/context-key.test.ts",
+      "name": "context-key.test.ts",
+      "family": "test-only",
+      "status": "classified",
+      "reason": "Test code never belongs to the NAS runtime bundle.",
+      "lastModifiedAt": "2026-06-08T11:37:34.000Z"
+    },
+    {
+      "path": "test/error-messages.test.ts",
+      "name": "error-messages.test.ts",
+      "family": "test-only",
+      "status": "classified",
+      "reason": "Test code never belongs to the NAS runtime bundle.",
+      "lastModifiedAt": "2026-06-08T20:50:16.000Z"
+    },
+    {
+      "path": "test/format.test.ts",
+      "name": "format.test.ts",
+      "family": "test-only",
+      "status": "classified",
+      "reason": "Test code never belongs to the NAS runtime bundle.",
+      "lastModifiedAt": "2026-06-08T11:37:34.000Z"
+    },
+    {
+      "path": "test/handoff-inbox.test.ts",
+      "name": "handoff-inbox.test.ts",
+      "family": "test-only",
+      "status": "classified",
+      "reason": "Test code never belongs to the NAS runtime bundle.",
+      "lastModifiedAt": "2026-06-08T20:06:02.000Z"
+    },
+    {
+      "path": "test/health.test.ts",
+      "name": "health.test.ts",
+      "family": "test-only",
+      "status": "classified",
+      "reason": "Test code never belongs to the NAS runtime bundle.",
+      "lastModifiedAt": "2026-06-08T17:35:06.000Z"
+    },
+    {
+      "path": "test/nas-runtime-inventory.test.ts",
+      "name": "nas-runtime-inventory.test.ts",
+      "family": "test-only",
+      "status": "classified",
+      "reason": "Test code never belongs to the NAS runtime bundle.",
+      "lastModifiedAt": "2026-06-15T09:09:06.080Z"
+    },
+    {
+      "path": "test/process-control.test.ts",
+      "name": "process-control.test.ts",
+      "family": "test-only",
+      "status": "classified",
+      "reason": "Test code never belongs to the NAS runtime bundle.",
+      "lastModifiedAt": "2026-06-08T22:06:00.000Z"
+    },
+    {
+      "path": "test/repo-diagnostics.test.ts",
+      "name": "repo-diagnostics.test.ts",
+      "family": "test-only",
+      "status": "classified",
+      "reason": "Test code never belongs to the NAS runtime bundle.",
+      "lastModifiedAt": "2026-06-15T08:29:17.981Z"
+    },
+    {
+      "path": "test/runtime-paths.test.ts",
+      "name": "runtime-paths.test.ts",
+      "family": "test-only",
+      "status": "classified",
+      "reason": "Test code never belongs to the NAS runtime bundle.",
+      "lastModifiedAt": "2026-06-08T22:35:32.000Z"
+    },
+    {
+      "path": "test/session-registry.test.ts",
+      "name": "session-registry.test.ts",
+      "family": "test-only",
+      "status": "classified",
+      "reason": "Test code never belongs to the NAS runtime bundle.",
+      "lastModifiedAt": "2026-06-10T10:15:36.115Z"
+    },
+    {
+      "path": "test/tool-summary.test.ts",
+      "name": "tool-summary.test.ts",
+      "family": "test-only",
+      "status": "classified",
+      "reason": "Test code never belongs to the NAS runtime bundle.",
+      "lastModifiedAt": "2026-06-08T17:55:02.000Z"
+    },
+    {
+      "path": "test/topic-ux.test.ts",
+      "name": "topic-ux.test.ts",
+      "family": "test-only",
+      "status": "classified",
+      "reason": "Test code never belongs to the NAS runtime bundle.",
+      "lastModifiedAt": "2026-06-08T11:37:34.000Z"
+    },
+    {
+      "path": "test/voice.decode.test.ts",
+      "name": "voice.decode.test.ts",
+      "family": "test-only",
+      "status": "classified",
+      "reason": "Test code never belongs to the NAS runtime bundle.",
+      "lastModifiedAt": "2026-06-08T11:37:34.000Z"
+    },
+    {
+      "path": "test/voice.test.ts",
+      "name": "voice.test.ts",
+      "family": "test-only",
+      "status": "classified",
+      "reason": "Test code never belongs to the NAS runtime bundle.",
+      "lastModifiedAt": "2026-06-08T11:37:34.000Z"
+    },
+    {
+      "path": "test/workspace.test.ts",
+      "name": "workspace.test.ts",
+      "family": "test-only",
+      "status": "classified",
+      "reason": "Test code never belongs to the NAS runtime bundle.",
+      "lastModifiedAt": "2026-06-08T22:55:22.000Z"
+    },
+    {
+      "path": "tmp_node_test.txt",
+      "name": "tmp_node_test.txt",
+      "family": "local-sensitive-forbidden",
+      "status": "classified",
+      "reason": "Local env, log, or machine-specific runtime file must stay out of the NAS bundle.",
+      "lastModifiedAt": "2026-06-08T12:58:00.000Z"
+    },
+    {
+      "path": "tmp_write_test.txt",
+      "name": "tmp_write_test.txt",
+      "family": "local-sensitive-forbidden",
+      "status": "classified",
+      "reason": "Local env, log, or machine-specific runtime file must stay out of the NAS bundle.",
+      "lastModifiedAt": "2026-06-08T12:55:12.000Z"
+    },
+    {
+      "path": "tsconfig.json",
+      "name": "tsconfig.json",
+      "family": "runtime-optional",
+      "status": "classified",
+      "reason": "Optional NAS dev/runtime packaging input.",
+      "lastModifiedAt": "2026-06-08T11:37:34.000Z"
+    },
+    {
+      "path": "vitest.config.ts",
+      "name": "vitest.config.ts",
+      "family": "developer-only",
+      "status": "classified",
+      "reason": "Repository-level file not needed inside the NAS bundle payload.",
+      "lastModifiedAt": "2026-06-08T11:37:34.000Z"
+    },
+    {
+      "path": "worker/.env",
+      "name": ".env",
+      "family": "local-sensitive-forbidden",
+      "status": "classified",
+      "reason": "Local env, log, or machine-specific runtime file must stay out of the NAS bundle.",
+      "lastModifiedAt": "2026-06-10T13:32:52.550Z"
+    }
+  ]
+}

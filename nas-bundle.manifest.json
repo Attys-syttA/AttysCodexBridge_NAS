@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "packageName": "telegram-codex-bot-bridge",
+  "include": [
+    ".dockerignore",
+    ".env.bridge.example",
+    "package.json",
+    "package-lock.json",
+    "tsconfig.json",
+    "Dockerfile.bridge",
+    "Dockerfile.bridge.dev",
+    "docker-compose.bridge.yml",
+    "docker-compose.bridge.dev.yml",
+    "dist/**",
+    "src/**",
+    "docs/nas-bridge-setup.hu.md",
+    "docs/nas-shared-folder-layout.hu.md",
+    "docs/worker-setup.hu.md"
+  ],
+  "forbiddenPackageEntries": [
+    ".env",
+    ".env.example",
+    ".env.worker.example",
+    "worker/**",
+    "test/**",
+    "scripts/**",
+    ".github/**",
+    ".serena/**",
+    "telegram_codex_bot/**",
+    "telecodex-run.log",
+    "telecodex-run.err.log",
+    "tmp_node_test.txt",
+    "tmp_write_test.txt"
+  ]
+}

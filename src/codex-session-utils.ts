@@ -1,5 +1,6 @@
 import { formatCapabilityMode } from "./codex-launch.js";
-import type { CodexPromptInput, CodexSessionInfo } from "./codex-session.js";
+import type { CodexSessionInfo } from "./codex-session.js";
+import type { CodexPromptInput } from "./codex-session.js";
 
 export function promptLikelyNeedsGithubWrite(input: CodexPromptInput): boolean {
   const text = typeof input === "string"
@@ -22,4 +23,9 @@ export function promptLikelyNeedsGithubWrite(input: CodexPromptInput): boolean {
 
 export function formatCapabilitySummary(info: Pick<CodexSessionInfo, "capabilityMode" | "githubWriteEnabled">): string {
   return `${formatCapabilityMode(info.capabilityMode as "safe" | "github-write")}${info.githubWriteEnabled ? " [github-write]" : ""}`;
+}
+
+export function formatPushCapabilitySummary(info: Pick<CodexSessionInfo, "pushCapabilityStatus" | "pushCapabilityReason" | "pushRemoteName">): string {
+  const remote = info.pushRemoteName ? ` (${info.pushRemoteName})` : "";
+  return `${info.pushCapabilityStatus}${remote}: ${info.pushCapabilityReason}`;
 }

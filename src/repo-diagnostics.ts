@@ -19,6 +19,31 @@ export interface GitStatusSummary {
   error?: string;
 }
 
+export type GitPushCapabilityStatus = "unknown" | "available" | "blocked" | "degraded";
+
+export interface GitRemoteSummary {
+  name: string;
+  fetchUrl?: string;
+  pushUrl?: string;
+}
+
+export interface GitPushCapability {
+  status: GitPushCapabilityStatus;
+  reason: string;
+  remoteName?: string;
+  remoteUrl?: string;
+  branch?: string;
+  targetBranch?: string;
+}
+
+export interface GitPushResult {
+  remoteName: string;
+  remoteUrl?: string;
+  branch: string;
+  targetBranch: string;
+  output: string;
+}
+
 export interface RepoDiagnostics {
   workspace: string;
   git: GitStatusSummary;
@@ -40,6 +65,119 @@ export async function inspectRepo(workspace: string, workspaceRoot?: string): Pr
     git,
     agentsFiles: findAgentsFiles(agentsBase, workspaceRoot),
     workspaceLooksLikeParent: isWorkspaceParent(workspace, workspaceRoot, git.repoRoot),
+  };
+}
+
+export async function probeGitPushCapability(workspace: string): Promise<GitPushCapability> {
+  const status = await getGitStatus(workspace);
+  if (!status.isRepo || !status.repoRoot) {
+    return {
+      status: "blocked",
+      reason: "Az aktív workspace nem git repo.",
+    };
+  }
+
+  if (!status.branch || status.branch === "(detached)") {
+    return {
+      status: "blocked",
+      reason: "A repo detached HEAD állapotban van, nincs pusholható branch.",
+      branch: status.branch,
+    };
+  }
+
+  const remotes = await getGitRemotes(status.repoRoot);
+  const target = resolvePushTarget(status, remotes);
+  if (!target) {
+    return {
+      status: "blocked",
+      reason: "Nincs használható git remote vagy upstream beállítás.",
+      branch: status.branch,
+    };
+  }
+
+  try {
+    await git(status.repoRoot, ["ls-remote", "--exit-code", target.remote.name, "HEAD"]);
+  } catch (error) {
+    return {
+      status: "blocked",
+      reason: classifyGitPublishFailure(formatError(error)),
+      remoteName: target.remote.name,
+      remoteUrl: target.remote.pushUrl ?? target.remote.fetchUrl,
+      branch: status.branch,
+      targetBranch: target.targetBranch,
+    };
+  }
+
+  if (status.behind > 0) {
+    return {
+      status: "degraded",
+      reason: "A helyi branch le van maradva az upstreamhez képest, push előtt szinkron kell.",
+      remoteName: target.remote.name,
+      remoteUrl: target.remote.pushUrl ?? target.remote.fetchUrl,
+      branch: status.branch,
+      targetBranch: target.targetBranch,
+    };
+  }
+
+  try {
+    await git(status.repoRoot, [
+      "push",
+      "--dry-run",
+      "--porcelain",
+      target.remote.name,
+      `HEAD:refs/heads/${target.targetBranch}`,
+    ]);
+  } catch (error) {
+    return {
+      status: "degraded",
+      reason: classifyGitPublishFailure(formatError(error)),
+      remoteName: target.remote.name,
+      remoteUrl: target.remote.pushUrl ?? target.remote.fetchUrl,
+      branch: status.branch,
+      targetBranch: target.targetBranch,
+    };
+  }
+
+  return {
+    status: "available",
+    reason: status.ahead > 0
+      ? "A remote elérhető, az auth működik, a push útvonal ellenőrizve lett."
+      : "A remote elérhető és a push útvonal ellenőrizve lett, de jelenleg nincs még feltétlen küldendő commit.",
+    remoteName: target.remote.name,
+    remoteUrl: target.remote.pushUrl ?? target.remote.fetchUrl,
+    branch: status.branch,
+    targetBranch: target.targetBranch,
+  };
+}
+
+export async function executeGitPush(workspace: string): Promise<GitPushResult> {
+  const status = await getGitStatus(workspace);
+  if (!status.isRepo || !status.repoRoot) {
+    throw new Error("Az aktív workspace nem git repo.");
+  }
+  if (!status.branch || status.branch === "(detached)") {
+    throw new Error("A repo detached HEAD állapotban van, nincs pusholható branch.");
+  }
+
+  const remotes = await getGitRemotes(status.repoRoot);
+  const target = resolvePushTarget(status, remotes);
+  if (!target) {
+    throw new Error("Nincs használható git remote vagy upstream beállítás.");
+  }
+
+  const output = await git(status.repoRoot, [
+    "push",
+    "--porcelain",
+    target.remote.name,
+    `HEAD:refs/heads/${target.targetBranch}`,
+  ]);
+
+  return {
+    remoteName: target.remote.name,
+    remoteUrl: target.remote.pushUrl ?? target.remote.fetchUrl,
+    branch: status.branch,
+    targetBranch: target.targetBranch,
+    output: output.trim(),
   };
 }
 
@@ -123,6 +261,53 @@ export function parseGitPorcelainStatus(raw: string): {
   return result;
 }
 
+export function parseGitRemoteList(raw: string): GitRemoteSummary[] {
+  const remotes = new Map<string, GitRemoteSummary>();
+  const lines = raw.split(/\r?\n/).filter(Boolean);
+
+  for (const line of lines) {
+    const match = line.match(/^(\S+)\s+(\S+)\s+\((fetch|push)\)$/);
+    if (!match) {
+      continue;
+    }
+
+    const [, name, url, kind] = match;
+    const current = remotes.get(name) ?? { name };
+    if (kind === "fetch") {
+      current.fetchUrl = url;
+    } else {
+      current.pushUrl = url;
+    }
+    remotes.set(name, current);
+  }
+
+  return [...remotes.values()];
+}
+
+export function classifyGitPublishFailure(message: string): string {
+  const normalized = message.toLowerCase();
+
+  if (
+    /failed to connect|could not connect|timed out|could not resolve host|network is unreachable|no route to host/.test(normalized)
+  ) {
+    return "A git remote hálózaton nem érhető el a worker felől.";
+  }
+
+  if (
+    /authentication failed|permission denied|403|401|could not read username|repository not found|access denied/.test(normalized)
+  ) {
+    return "A git hitelesítés hiányzik vagy a remote elutasította.";
+  }
+
+  if (
+    /non-fast-forward|fetch first|rejected|remote contains work that you do not have locally|updates were rejected/.test(normalized)
+  ) {
+    return "A remote branch állapota miatt a push most nem biztonságos; előbb szinkronizálni kell.";
+  }
+
+  return message.trim() || "A push ellenőrzése sikertelen lett.";
+}
+
 export function findAgentsFiles(startPath: string, workspaceRoot?: string): string[] {
   const files: string[] = [];
   let current = path.resolve(stripExtendedLengthPrefix(startPath));
@@ -165,6 +350,17 @@ export function formatGitStatusPlain(status: GitStatusSummary): string {
   ].join("\n");
 }
 
+export function formatGitPushCapabilityPlain(capability: GitPushCapability): string {
+  const parts = [
+    `Remote GitHub push: ${capability.status}`,
+    capability.reason,
+    capability.remoteName ? `Remote: ${capability.remoteName}` : undefined,
+    capability.branch ? `Branch: ${capability.branch}` : undefined,
+    capability.targetBranch ? `Cél branch: ${capability.targetBranch}` : undefined,
+  ];
+  return parts.filter((line): line is string => Boolean(line)).join("\n");
+}
+
 async function git(cwd: string, args: string[]): Promise<string> {
   const { stdout } = await execFileAsync("git", args, {
     cwd,
@@ -173,6 +369,48 @@ async function git(cwd: string, args: string[]): Promise<string> {
     maxBuffer: 1024 * 1024,
   });
   return stdout;
+}
+
+async function getGitRemotes(repoRoot: string): Promise<GitRemoteSummary[]> {
+  try {
+    const raw = await git(repoRoot, ["remote", "-v"]);
+    return parseGitRemoteList(raw);
+  } catch {
+    return [];
+  }
+}
+
+function resolvePushTarget(
+  status: GitStatusSummary,
+  remotes: GitRemoteSummary[],
+): { remote: GitRemoteSummary; targetBranch: string } | undefined {
+  if (!status.branch) {
+    return undefined;
+  }
+
+  if (status.upstream) {
+    const slashIndex = status.upstream.indexOf("/");
+    if (slashIndex > 0) {
+      const remoteName = status.upstream.slice(0, slashIndex);
+      const targetBranch = status.upstream.slice(slashIndex + 1);
+      const remote = remotes.find((entry) => entry.name === remoteName);
+      if (remote && targetBranch) {
+        return { remote, targetBranch };
+      }
+    }
+  }
+
+  const origin = remotes.find((entry) => entry.name === "origin");
+  if (origin) {
+    return { remote: origin, targetBranch: status.branch };
+  }
+
+  const first = remotes[0];
+  if (first) {
+    return { remote: first, targetBranch: status.branch };
+  }
+
+  return undefined;
 }
 
 function normalizeGitPath(value: string): string {

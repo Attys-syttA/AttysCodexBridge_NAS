@@ -6,6 +6,7 @@ import type { AuthStatus, LoginResult } from "./codex-auth.js";
 import type { CodexPromptInput, CodexSessionCallbacks, CodexSessionInfo, CreateOptions, SwitchSessionOptions } from "./codex-session.js";
 import type { CodexLaunchProfile } from "./codex-launch.js";
 import type { CodexModelRecord, CodexThreadRecord } from "./codex-state.js";
+import type { GitPushCapability, GitPushResult, RepoDiagnostics } from "./repo-diagnostics.js";
 import type { TranscriptionBackend, TranscriptionResult } from "./voice.js";
 
 interface WorkerEnvelope<T> {
@@ -88,6 +89,18 @@ export class RemoteWorkerClient {
 
   async listModels(sessionId: string): Promise<CodexModelRecord[]> {
     return this.requestJson("GET", `/sessions/${encodeURIComponent(sessionId)}/models`);
+  }
+
+  async inspectRepo(sessionId: string): Promise<RepoDiagnostics> {
+    return this.requestJson("GET", `/sessions/${encodeURIComponent(sessionId)}/repo-diagnostics`);
+  }
+
+  async probePushCapability(sessionId: string): Promise<GitPushCapability> {
+    return this.requestJson("GET", `/sessions/${encodeURIComponent(sessionId)}/push-capability`);
+  }
+
+  async pushCurrentBranch(sessionId: string): Promise<GitPushResult> {
+    return this.requestJson("POST", `/sessions/${encodeURIComponent(sessionId)}/push`, {});
   }
 
   async abort(sessionId: string): Promise<void> {
